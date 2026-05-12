@@ -44,19 +44,31 @@ python -m lib.watermark \
 
 mkdir -p "${ROOT_DIR}/streams"
 
-log "encoding H.264 MP4 (libx264 crf 18 yuv420p)"
+# Force a 2-second GOP so a contestant that connects mid-stream waits at most
+# 2s for the next IDR. Without this libx264 / libx265 default to keyint=250
+# (~8s @ 30fps / ~10s @ 25fps), which combined with contestants that drop
+# packets until they see an IDR can push first-frame latency past the runner's
+# 15s readiness timeout. scenecut=0 keeps the GOP rigidly periodic so the
+# evaluator's timing analysis stays predictable.
+H264_GOP=$(( H264_FPS * 2 ))
+H265_GOP=$(( H265_FPS * 2 ))
+
+log "encoding H.264 MP4 (libx264 crf 18 yuv420p, GOP=${H264_GOP})"
 ffmpeg -y -loglevel error \
     -framerate "${H264_FPS}" \
     -i "${H264_DIR}/frame_%05d.png" \
     -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p \
+    -g "${H264_GOP}" -keyint_min "${H264_GOP}" \
+    -x264-params "scenecut=0" \
     -movflags +faststart \
     "${H264_MP4}"
 
-log "encoding H.265 MP4 (libx265 4 Mbps yuv420p)"
+log "encoding H.265 MP4 (libx265 4 Mbps yuv420p, GOP=${H265_GOP})"
 ffmpeg -y -loglevel error \
     -framerate "${H265_FPS}" \
     -i "${H265_DIR}/frame_%05d.png" \
     -c:v libx265 -tag:v hvc1 -b:v 4M -maxrate 4M -bufsize 8M -pix_fmt yuv420p \
+    -x265-params "keyint=${H265_GOP}:min-keyint=${H265_GOP}:scenecut=0" \
     -movflags +faststart \
     "${H265_MP4}"
 

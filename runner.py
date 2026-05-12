@@ -90,10 +90,27 @@ def run_capture(codec: str, output: Path, duration_s: float, fps: float) -> Capt
         page.on("pageerror", lambda exc: result.browser_errors.append(f"pageerror: {exc}"))
         page.on(
             "console",
-            lambda msg: result.browser_errors.append(f"console.{msg.type}: {msg.text}")
-            if msg.type in ("error", "warning")
+            lambda msg: result.browser_errors.append(f"console.{msg.type}: {msg.text}"),
+        )
+        page.on(
+            "requestfailed",
+            lambda req: result.browser_errors.append(
+                f"requestfailed: {req.method} {req.url} -> {req.failure}"
+            ),
+        )
+        page.on(
+            "response",
+            lambda resp: result.browser_errors.append(
+                f"response: {resp.status} {resp.url}"
+            )
+            if resp.status >= 400
             else None,
         )
+        page.on(
+            "worker",
+            lambda w: result.browser_errors.append(f"worker.created: {w.url}"),
+        )
+        page.on("crash", lambda _p: result.browser_errors.append("page.crash"))
 
         try:
             # NEVER networkidle — streaming apps keep network busy forever.
@@ -115,6 +132,58 @@ def run_capture(codec: str, output: Path, duration_s: float, fps: float) -> Capt
             )
         except PlaywrightTimeout:
             err = page.evaluate("window.__PLAYER_ERROR__ || null")
+            # Full diagnostic snapshot — we cannot guess from a single error string
+            # why the player never fired __PLAYER_READY__.
+            try:
+                diag = page.evaluate(
+                    """() => {
+                        const el = document.querySelector('[data-testid="player-video"]');
+                        const canvas = document.getElementById('contest-canvas');
+                        const video = document.getElementById('contest-video');
+                        const errBox = document.getElementById('contest-error');
+                        const bbox = el ? el.getBoundingClientRect() : null;
+                        return {
+                            url: location.href,
+                            ready: window.__PLAYER_READY__,
+                            error: window.__PLAYER_ERROR__ ?? null,
+                            crossOriginIsolated: self.crossOriginIsolated,
+                            hasSAB: typeof SharedArrayBuffer !== 'undefined',
+                            hasWebCodecs: typeof VideoDecoder !== 'undefined',
+                            hasWebGL: (() => {
+                                try {
+                                    const c = document.createElement('canvas');
+                                    return !!(c.getContext('webgl2') || c.getContext('webgl'));
+                                } catch (e) { return 'threw:' + e; }
+                            })(),
+                            hostExists: !!el,
+                            hostBBox: bbox && {
+                                x: bbox.x, y: bbox.y, w: bbox.width, h: bbox.height,
+                            },
+                            canvasSize: canvas && { w: canvas.width, h: canvas.height,
+                                                   cw: canvas.clientWidth, ch: canvas.clientHeight },
+                            videoState: video && {
+                                readyState: video.readyState,
+                                paused: video.paused,
+                                currentTime: video.currentTime,
+                                error: video.error && video.error.code,
+                                src: video.currentSrc || video.src,
+                            },
+                            errorBox: errBox && errBox.textContent,
+                            docReadyState: document.readyState,
+                            hidden: document.hidden,
+                        };
+                    }"""
+                )
+                result.browser_errors.append(f"diagnostic: {json.dumps(diag)}")
+            except PlaywrightError as exc:
+                result.browser_errors.append(f"diagnostic_failed: {exc}")
+            # Capture a screenshot of the *page* (not just the host element) for
+            # eyeball debugging — element clip may not exist if host never laid
+            # out.
+            try:
+                page.screenshot(path=str(output / "_timeout_page.png"), full_page=False)
+            except PlaywrightError as exc:
+                result.browser_errors.append(f"screenshot_failed: {exc}")
             result.reason = f"startup timeout (__PLAYER_ERROR__={err})"
             _write_timestamps(output, result)
             browser.close()
