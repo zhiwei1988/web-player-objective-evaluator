@@ -1,0 +1,9 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>never ready</title></head>
+<body style="margin:0;background:#000">
+<!-- player-video exists, but __PLAYER_READY__ is never set. -->
+<video data-testid="player-video" style="width:1280px;height:720px"></video>
+<script>
+window.__PLAYER_ERROR__ = 'this submission intentionally never signals readiness';
+</script>
+</body></html>

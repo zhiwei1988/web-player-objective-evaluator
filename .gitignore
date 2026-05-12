@@ -1,0 +1,45 @@
+# Python venv
+.venv/
+
+# Source-build install prefix and per-submodule build artifacts
+third_party/install/
+third_party/*/build/
+third_party/*/*.o
+third_party/*/*.a
+third_party/*/*.so
+third_party/*/*.so.*
+third_party/*/*.la
+third_party/*/*.lo
+third_party/*/autom4te.cache/
+third_party/*/config.log
+third_party/*/config.status
+third_party/*/Makefile
+third_party/ffmpeg/ffbuild/
+third_party/ffmpeg/config.h
+third_party/ffmpeg/ffmpeg
+third_party/ffmpeg/ffprobe
+third_party/leptonica/src/.libs/
+third_party/tesseract/src/.libs/
+third_party/libdmtx/.libs/
+third_party/mediamtx/mediamtx
+
+# Generated reference assets
+streams/*.mp4
+reference/h264/frame_*.png
+reference/h265/frame_*.png
+
+# Per-submission staging and results
+submissions/*/
+results/*/
+
+# Generated test_submission zips (built from src/ by build_test_zips.sh)
+test_submissions/*.zip
+
+# Misc
+*.pyc
+__pycache__/
+*.log
+
+# AI Agent
+.claude/
+.codex/

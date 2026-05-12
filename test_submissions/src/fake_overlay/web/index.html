@@ -1,0 +1,58 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>fake overlay cheat</title>
+<style>html,body{margin:0;background:#000}#p{display:block;width:1280px;height:720px}</style>
+</head>
+<body>
+<canvas id="p" data-testid="player-video" width="1280" height="720"></canvas>
+<script>
+const c = document.getElementById('p');
+const ctx = c.getContext('2d');
+const W = c.width, H = c.height;
+let n = 0;
+function draw() {
+  // Black background — this is the cheat: no live video, just an overlay.
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+
+  // Top-left frame number block (mimics watermark).
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W*0.20, H*0.12);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 48px monospace';
+  ctx.fillText(String(n).padStart(5, '0'), 12, H*0.12 - 12);
+
+  // Top-right timecode.
+  ctx.fillStyle = '#000';
+  ctx.fillRect(W*0.75, 0, W*0.25, H*0.12);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 36px monospace';
+  ctx.fillText('00:00:00.000', W*0.77, H*0.12 - 12);
+
+  // Bottom color strip — correct RGB, so this single check passes.
+  const blocks = [['#ff0000', 0], ['#00ff00', .25], ['#0000ff', .50], ['#ffffff', .75]];
+  for (const [col, x] of blocks) {
+    ctx.fillStyle = col;
+    ctx.fillRect(W*x, H*0.90, W*0.25, H*0.10);
+  }
+
+  // Bottom-right: a noise block that LOOKS like a DataMatrix but isn't valid.
+  // pylibdmtx will reject it; OCR fallback also can't recover the number.
+  const sz = Math.floor(Math.min(W, H) * 0.10);
+  const x0 = W - sz - 4;
+  const y0 = H * 0.90 - sz - 4;
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(x0 - 4, y0 - 4, sz + 8, sz + 8);
+  for (let y = 0; y < sz; y += 4) {
+    for (let x = 0; x < sz; x += 4) {
+      ctx.fillStyle = ((x + y + n) % 8) < 4 ? '#000' : '#fff';
+      ctx.fillRect(x0 + x, y0 + y, 4, 4);
+    }
+  }
+
+  n++;
+  requestAnimationFrame(draw);
+}
+draw();
+window.__PLAYER_READY__ = true;
+</script>
+</body></html>

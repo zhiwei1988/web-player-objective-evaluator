@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Reference player (self-test)</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; }
+  #player {
+    display: block;
+    width: 1280px;
+    height: 720px;
+    object-fit: contain;
+  }
+</style>
+</head>
+<body>
+<video id="player" data-testid="player-video" autoplay muted playsinline></video>
+<script>
+(() => {
+  const params = new URLSearchParams(window.location.search);
+  const codec = params.get('codec') === 'h265' ? 'h265' : 'h264';
+  const autoplay = params.get('autoplay') === '1';
+
+  const player = document.getElementById('player');
+  player.src = `/${codec}.mp4`;
+  player.loop = true;
+
+  player.addEventListener('loadeddata', () => { window.__PLAYER_READY__ = true; });
+  player.addEventListener('error', (e) => {
+    window.__PLAYER_ERROR__ = `video error: ${player.error && player.error.message || 'unknown'}`;
+  });
+
+  if (autoplay) {
+    const tryPlay = () => player.play().catch(err => {
+      window.__PLAYER_ERROR__ = `play() rejected: ${err.message}`;
+    });
+    if (player.readyState >= 2) tryPlay();
+    else player.addEventListener('loadeddata', tryPlay, { once: true });
+  }
+})();
+</script>
+</body>
+</html>

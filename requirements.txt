@@ -1,0 +1,16 @@
+# Python deps for the objective evaluator.
+# Pinned to versions verified on Ubuntu 24.04 + Python 3.12.
+# Re-pin when bumping the host or a transitive constraint changes.
+
+# setuptools must be present BEFORE pylibdmtx is imported because pylibdmtx 0.1.10
+# still does `from distutils.version import LooseVersion`, and distutils was removed
+# from the Python 3.12 stdlib. setuptools auto-injects a `distutils` shim via its
+# `distutils-precedence.pth` on interpreter startup.
+setuptools>=68
+
+playwright==1.49.0
+pillow==10.4.0
+numpy==1.26.4
+scikit-image==0.24.0
+pylibdmtx==0.1.10
+pytesseract==0.3.13

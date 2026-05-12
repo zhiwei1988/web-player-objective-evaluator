@@ -1,0 +1,21 @@
+[submodule "third_party/leptonica"]
+	path = third_party/leptonica
+	url = https://github.com/DanBloomberg/leptonica.git
+[submodule "third_party/tesseract"]
+	path = third_party/tesseract
+	url = https://github.com/tesseract-ocr/tesseract.git
+[submodule "third_party/libdmtx"]
+	path = third_party/libdmtx
+	url = https://github.com/dmtx/libdmtx.git
+[submodule "third_party/mediamtx"]
+	path = third_party/mediamtx
+	url = https://github.com/bluenviron/mediamtx.git
+[submodule "third_party/ffmpeg"]
+	path = third_party/ffmpeg
+	url = https://git.ffmpeg.org/ffmpeg.git
+[submodule "third_party/x264"]
+	path = third_party/x264
+	url = https://code.videolan.org/videolan/x264.git
+[submodule "third_party/x265"]
+	path = third_party/x265
+	url = https://bitbucket.org/multicoreware/x265_git.git

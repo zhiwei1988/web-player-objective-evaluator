@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>iframe-only cheat</title>
+<style>html,body{margin:0;background:#000}#p{display:block;width:1280px;height:720px;object-fit:contain}</style>
+</head>
+<body>
+<img id="p" data-testid="player-video" alt="">
+<script>
+const codec = new URLSearchParams(location.search).get('codec') === 'h265' ? 'h265' : 'h264';
+const frames = [100, 200, 300, 400, 500];
+const p = document.getElementById('p');
+let i = 0;
+p.src = `/${codec}/frame_${String(frames[0]).padStart(5,'0')}.png`;
+p.onload = () => { window.__PLAYER_READY__ = true; };
+// Rotate every 200ms — five frames, ~5 unique per second, 25 unique per 30s capture.
+setInterval(() => {
+  i = (i + 1) % frames.length;
+  p.src = `/${codec}/frame_${String(frames[i]).padStart(5,'0')}.png`;
+}, 200);
+</script>
+</body></html>
