@@ -294,7 +294,20 @@ def _cli() -> int:
 
     metrics = analyze(args.codec, args.screenshots, args.reference)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(metrics_to_dict(metrics), indent=2))
+    metrics_dict = metrics_to_dict(metrics)
+    # Forward the runner's CPU sample summary if it left one. analyzer.py
+    # does no CPU computation itself — capture_meta.json is the source of
+    # truth, scorer.py is the consumer.
+    meta_file = args.screenshots / "capture_meta.json"
+    if meta_file.exists():
+        try:
+            meta = json.loads(meta_file.read_text())
+            cpu = meta.get("cpu")
+            if cpu is not None:
+                metrics_dict["cpu"] = cpu
+        except (OSError, json.JSONDecodeError):
+            pass
+    args.output.write_text(json.dumps(metrics_dict, indent=2))
     print(json.dumps({
         "codec": args.codec,
         "watermark_recognition_rate": metrics.watermark_recognition_rate,
