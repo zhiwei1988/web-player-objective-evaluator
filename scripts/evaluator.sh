@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Per-submission evaluator entry point.
-#   ./scripts/evaluator.sh <team_id> <submission_zip>
-#
-# Run order matters and the trap is defined BEFORE anything that can fail so
-# cleanup runs on every exit path.
+# Evaluator main body — runs MediaMTX + capture + scoring inside a prepared
+# host environment. Host-side concerns (zip extract, contestant start.sh /
+# stop.sh, port precheck) belong to scripts/evaluator-host.sh (target host)
+# or scripts/evaluator-local.sh (build host shortcut). MediaMTX is brought
+# up AND torn down by this script per run; it is no longer shared with a
+# host-resident daemon.
 
 set -uo pipefail
 # NB: not `set -e` — we want explicit failure handling per step so the score JSON
@@ -14,21 +15,19 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 usage() {
     cat >&2 <<'EOF'
-Usage: scripts/evaluator.sh <team_id> <submission_zip>
+Usage: scripts/evaluator.sh <team_id> <results_subdir>
 
-Required:
-  team_id          Short identifier for this run. Used in results/<team_id>_<timestamp>/.
-  submission_zip   Path to the contestant submission zip.
-
-The submission zip must extract to provide start.sh (required) and stop.sh (optional).
+Invoked by scripts/evaluator-host.sh or scripts/evaluator-local.sh after
+the contestant frontend is already serving on http://127.0.0.1:8080.
+Reads streams/ and reference/ from the workspace; writes capture artifacts
++ score.json + report.html under results/<results_subdir>/.
 EOF
     exit 64
 }
 
 (( $# >= 2 )) || usage
 TEAM_ID="$1"
-SUBMISSION_ZIP="$(readlink -f "$2" 2>/dev/null || echo "$2")"
-[[ -f "${SUBMISSION_ZIP}" ]] || { printf 'evaluator: zip not found: %s\n' "${SUBMISSION_ZIP}" >&2; exit 65; }
+RESULTS_SUBDIR="$2"
 
 # Pre-flight: source-built binaries must be present.
 for bin in ffmpeg mediamtx tesseract; do
@@ -41,10 +40,8 @@ done
 # shellcheck source=env.sh
 source "${SCRIPT_DIR}/env.sh"
 
-TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
-RUN_DIR="${ROOT_DIR}/results/${TEAM_ID}_${TIMESTAMP}"
-STAGE_DIR="${ROOT_DIR}/submissions/${TEAM_ID}"
-mkdir -p "${RUN_DIR}" "${STAGE_DIR}"
+RUN_DIR="${ROOT_DIR}/results/${RESULTS_SUBDIR}"
+[[ -d "${RUN_DIR}" ]] || { printf 'evaluator: results dir does not exist: %s\n' "${RUN_DIR}" >&2; exit 65; }
 
 LOG_FILE="${RUN_DIR}/evaluator.log"
 SCORE_FILE="${RUN_DIR}/score.json"
@@ -62,7 +59,6 @@ log()  { printf '[evaluator] %s\n' "$*"; }
 die()  { printf 'evaluator failed: %s\n' "$*"; }
 
 # State shared with the cleanup trap.
-CONTESTANT_PID=""
 FAILURE_REASON=""
 H264_REASON=""
 H265_REASON=""
@@ -80,33 +76,24 @@ write_failure_score() {
         >/dev/null 2>&1 || true
 }
 
-clean_ports() {
-    # The only port the evaluator contracts for is 8080 (contestant HTTP
-    # frontend). Any other ports the contestant uses internally are their
-    # own concern; the process-group SIGKILL below cleans those up.
-    local pids
-    pids="$(lsof -ti:8080 2>/dev/null || true)"
-    if [[ -n "${pids}" ]]; then
-        log "killing pid(s) on :8080: ${pids}"
-        kill -9 ${pids} 2>/dev/null || true
+stop_mediamtx() {
+    # MediaMTX is owned per-run by this script; kill it on every exit path.
+    if [[ -f "${ROOT_DIR}/rtsp_server/mediamtx.pid" ]]; then
+        local pid
+        pid="$(cat "${ROOT_DIR}/rtsp_server/mediamtx.pid" 2>/dev/null || true)"
+        if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+            log "stopping mediamtx pid ${pid}"
+            kill -TERM "${pid}" 2>/dev/null || true
+            sleep 0.5
+            kill -KILL "${pid}" 2>/dev/null || true
+        fi
+        rm -f "${ROOT_DIR}/rtsp_server/mediamtx.pid"
     fi
 }
 
 cleanup() {
     local rc=$?
-    # MediaMTX is intentionally NOT killed — it's owned by deploy.sh and shared
-    # across runs. We only kill what we started.
-    if [[ -n "${CONTESTANT_PID}" ]] && kill -0 "${CONTESTANT_PID}" 2>/dev/null; then
-        log "stopping contestant pid tree ${CONTESTANT_PID}"
-        if [[ -x "${STAGE_DIR}/stop.sh" ]]; then
-            (cd "${STAGE_DIR}" && timeout 10 ./stop.sh) || true
-        fi
-        # Belt-and-braces: kill the process group.
-        kill -- "-${CONTESTANT_PID}" 2>/dev/null || true
-        sleep 1
-        kill -9 -- "-${CONTESTANT_PID}" 2>/dev/null || true
-    fi
-    clean_ports
+    stop_mediamtx
     # If no score file exists, this run died before scoring — write a failure.
     if [[ ! -f "${SCORE_FILE}" ]]; then
         write_failure_score "${FAILURE_REASON:-evaluator aborted}"
@@ -121,16 +108,10 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 log "starting run team_id=${TEAM_ID} run_dir=${RUN_DIR}"
-log "submission=${SUBMISSION_ZIP}"
-log "chromium=$(cat "${ROOT_DIR}/third_party/install/playwright_chromium.version" 2>/dev/null | tr '\n' ' ')"
+log "chromium=$(tr '\n' ' ' < "${ROOT_DIR}/third_party/install/playwright_chromium.version" 2>/dev/null)"
 
-# Pre-run cleanup.
-log "pre-run cleanup of port 8080"
-clean_ports
-
-# Ensure RTSP server is up. deploy.sh idempotently starts it; if it's already
-# running this is fast.
-log "ensuring RTSP server is up"
+# Bring MediaMTX up for this run.
+log "starting RTSP server"
 if ! "${SCRIPT_DIR}/start_rtsp.sh"; then
     FAILURE_REASON="rtsp infrastructure failure"
     log "${FAILURE_REASON}"
@@ -147,70 +128,25 @@ if ! "${SCRIPT_DIR}/health_check.sh" h265 15; then
     exit 70
 fi
 
-# Extract submission.
-log "extracting ${SUBMISSION_ZIP} into ${STAGE_DIR}"
-rm -rf "${STAGE_DIR}"; mkdir -p "${STAGE_DIR}"
-if ! unzip -qq "${SUBMISSION_ZIP}" -d "${STAGE_DIR}"; then
-    FAILURE_REASON="unzip failed"
-    log "${FAILURE_REASON}"
-    exit 71
-fi
-
-# If the zip wrapped everything in a single top-level directory, lift it.
-if [[ ! -f "${STAGE_DIR}/start.sh" ]]; then
-    inner="$(find "${STAGE_DIR}" -mindepth 1 -maxdepth 1 -type d | head -1 || true)"
-    if [[ -n "${inner}" && -f "${inner}/start.sh" ]]; then
-        log "lifting submission contents out of ${inner}"
-        shopt -s dotglob
-        mv "${inner}"/* "${STAGE_DIR}/"
-        shopt -u dotglob
-        rmdir "${inner}" 2>/dev/null || true
-    fi
-fi
-
-if [[ ! -f "${STAGE_DIR}/start.sh" ]]; then
-    FAILURE_REASON="missing start.sh"
-    log "${FAILURE_REASON}"
-    exit 1
-fi
-
-chmod +x "${STAGE_DIR}/start.sh"
-[[ -f "${STAGE_DIR}/stop.sh" ]] && chmod +x "${STAGE_DIR}/stop.sh"
-
-# Export contestant env.
-export RTSP_SERVER_HOST=127.0.0.1
-export RTSP_SERVER_PORT=8554
-export FRONTEND_PORT=8080
-
-log "invoking contestant start.sh"
-(cd "${STAGE_DIR}" && setsid ./start.sh) >"${RUN_DIR}/contestant.log" 2>&1 &
-CONTESTANT_PID=$!
-log "contestant pid=${CONTESTANT_PID}"
-
-# Poll the H.264 autoplay URL up to 60s.
-log "waiting up to 60s for http://localhost:${FRONTEND_PORT}/play?codec=h264&autoplay=1"
-ready=0
-for i in $(seq 1 60); do
-    if curl -fsS -o /dev/null --max-time 2 "http://localhost:${FRONTEND_PORT}/play?codec=h264&autoplay=1"; then
-        log "frontend reachable after ${i}s"
-        ready=1
-        break
-    fi
-    sleep 1
-done
-if (( ! ready )); then
-    FAILURE_REASON="startup timeout"
-    log "${FAILURE_REASON}"
-    write_failure_score "${FAILURE_REASON}"
-    exit 1
-fi
-
 # Run captures. We do not let a single round's failure abort the other one.
 run_capture() {
     local codec="$1" out="$2"
     log "running runner.py --codec ${codec}"
+
+    # Only H.265 round samples CPU. PGID comes from the wrapper's
+    # clx_start_contestant (setsid → SID == PGID == CONTESTANT_PID).
+    local extra_args=()
+    if [[ "${codec}" == "h265" && -f "${RUN_DIR}/contestant.pid" ]]; then
+        local pgid
+        pgid="$(cat "${RUN_DIR}/contestant.pid" 2>/dev/null || true)"
+        if [[ -n "${pgid}" ]]; then
+            extra_args+=(--contestant-pgid "${pgid}")
+        fi
+    fi
+
     if "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/runner.py" \
-            --codec "${codec}" --output "${out}" --duration 30 --fps 30; then
+            --codec "${codec}" --output "${out}" --duration 30 --fps 30 \
+            "${extra_args[@]}"; then
         return 0
     fi
     # runner.py wrote timestamps.json with the reason; surface it.
