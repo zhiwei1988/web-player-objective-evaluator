@@ -40,9 +40,19 @@ class CaptureResult:
     timestamps: list[float] = field(default_factory=list)
     browser_errors: list[str] = field(default_factory=list)
     chromium_version: str | None = None
+    cpu_sample_result: dict | None = None
+    capture_started_at_epoch: float | None = None
+    capture_ended_at_epoch: float | None = None
 
 
-def run_capture(codec: str, output: Path, duration_s: float, fps: float) -> CaptureResult:
+def run_capture(
+    codec: str,
+    output: Path,
+    duration_s: float,
+    fps: float,
+    contestant_pgid: int | None = None,
+    cpu_sample_hz: float | None = None,
+) -> CaptureResult:
     output.mkdir(parents=True, exist_ok=True)
     result = CaptureResult(success=False)
     url = f"http://localhost:8080/play?codec={codec}&autoplay=1"
@@ -219,38 +229,72 @@ def run_capture(codec: str, output: Path, duration_s: float, fps: float) -> Capt
         # against the reference PNG is computed on grayscale and quality=90
         # has no measurable impact at that level; DataMatrix and color blocks
         # are unaffected.
+        import _cpu_sampler
+
+        sampler: _cpu_sampler.Sampler | None = None
+        if codec == "h265" and contestant_pgid is not None:
+            sampler = _cpu_sampler.Sampler(
+                pgid=contestant_pgid,
+                hz=cpu_sample_hz if cpu_sample_hz else _cpu_sampler.DEFAULT_SAMPLE_HZ,
+            )
+            sampler.start()
+        result.capture_started_at_epoch = time.time()
+
         interval = 1.0 / fps
         n_frames = int(round(duration_s * fps))
         t0 = time.monotonic()
         next_deadline = t0
         try:
-            for i in range(n_frames):
-                # Pace ourselves; if we fall behind, capture anyway — better to
-                # under-sample than to lie about FPS.
-                now = time.monotonic()
-                if now < next_deadline:
-                    time.sleep(next_deadline - now)
-                ts = time.time()
-                path = output / f"shot_{i:05d}.jpg"
-                try:
-                    page.screenshot(path=str(path), clip=clip,
-                                    type="jpeg", quality=90)
-                except PlaywrightError as exc:
-                    result.browser_errors.append(f"screenshot {i}: {exc}")
-                    # Continue — analyzer will see the gap.
-                result.timestamps.append(ts)
-                next_deadline += interval
-        except KeyboardInterrupt:
-            result.reason = "interrupted"
-            browser.close()
-            _write_timestamps(output, result)
-            return result
+            try:
+                for i in range(n_frames):
+                    # Pace ourselves; if we fall behind, capture anyway — better to
+                    # under-sample than to lie about FPS.
+                    now = time.monotonic()
+                    if now < next_deadline:
+                        time.sleep(next_deadline - now)
+                    ts = time.time()
+                    path = output / f"shot_{i:05d}.jpg"
+                    try:
+                        page.screenshot(path=str(path), clip=clip,
+                                        type="jpeg", quality=90)
+                    except PlaywrightError as exc:
+                        result.browser_errors.append(f"screenshot {i}: {exc}")
+                        # Continue — analyzer will see the gap.
+                    result.timestamps.append(ts)
+                    next_deadline += interval
+            except KeyboardInterrupt:
+                result.reason = "interrupted"
+                browser.close()
+                _write_timestamps(output, result)
+                return result
+        finally:
+            result.capture_ended_at_epoch = time.time()
+            if sampler is not None:
+                sample_result = sampler.stop()
+                result.cpu_sample_result = sample_result.to_dict()
+            if codec == "h265" and contestant_pgid is not None:
+                _write_capture_meta(output, codec, result)
 
         browser.close()
 
     result.success = True
     _write_timestamps(output, result)
     return result
+
+
+def _write_capture_meta(output: Path, codec: str, result: CaptureResult) -> None:
+    """Write capture_meta.json next to the screenshots.
+
+    Only produced when sampling was requested. Absence is meaningful — the
+    analyzer/scorer interprets it as 'sampler did not run'.
+    """
+    meta = {
+        "codec": codec,
+        "capture_started_at_epoch": result.capture_started_at_epoch,
+        "capture_ended_at_epoch": result.capture_ended_at_epoch,
+        "cpu": result.cpu_sample_result,
+    }
+    (output / "capture_meta.json").write_text(json.dumps(meta, indent=2))
 
 
 def _write_timestamps(output: Path, result: CaptureResult) -> None:
@@ -274,9 +318,17 @@ def _cli() -> int:
     p.add_argument("--output", required=True, type=Path)
     p.add_argument("--duration", required=True, type=float, help="Seconds.")
     p.add_argument("--fps", required=True, type=float)
+    p.add_argument("--contestant-pgid", type=int, default=None,
+                   help="When set AND --codec is h265, sample the PGID's CPU.")
+    p.add_argument("--cpu-sample-hz", type=float, default=None,
+                   help="Sampler tick rate (debug-only, will be retired once calibrated).")
     args = p.parse_args()
 
-    result = run_capture(args.codec, args.output, args.duration, args.fps)
+    result = run_capture(
+        args.codec, args.output, args.duration, args.fps,
+        contestant_pgid=args.contestant_pgid,
+        cpu_sample_hz=args.cpu_sample_hz,
+    )
     print(json.dumps({"success": result.success, "reason": result.reason}))
     if result.success:
         return 0
