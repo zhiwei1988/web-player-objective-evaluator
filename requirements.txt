@@ -14,3 +14,6 @@ numpy==1.26.4
 scikit-image==0.24.0
 pylibdmtx==0.1.10
 pytesseract==0.3.13
+
+# Dev / test
+pytest==8.3.3
