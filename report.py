@@ -183,6 +183,40 @@ def render_report(
 </section>
 '''
 
+    cpu = score.get("cpu") or {}
+
+    def cpu_section() -> str:
+        if not cpu:
+            return ''
+        gated = cpu.get("gated")
+        gate_reason = cpu.get("gate_reason") or ""
+        mean = cpu.get("mean_percent")
+        mean_str = f"{mean:.2f}%" if isinstance(mean, (int, float)) else "—"
+        thresholds = cpu.get("thresholds_used") or {}
+        thresholds_json = html.escape(json.dumps(thresholds, indent=2))
+        gate_class = "fail" if gated else "ok"
+        gated_label = (
+            f'<span class="{gate_class}">gated: {html.escape(gate_reason)}</span>'
+            if gated else '<span class="ok">scored</span>'
+        )
+        return f'''
+<section>
+  <h2>CPU sub-score: {cpu.get("points", 0)}/10</h2>
+  <table>
+    <tr><th>state</th><td>{gated_label}</td></tr>
+    <tr><th>mean CPU</th><td>{mean_str}</td></tr>
+    <tr><th>samples</th><td>{cpu.get("sample_count", 0)}</td></tr>
+    <tr><th>window</th><td>{cpu.get("sample_window_ms", 0)} ms</td></tr>
+    <tr><th>ncpu</th><td>{cpu.get("ncpu")}</td></tr>
+    <tr><th>normalization</th><td><code>{html.escape(cpu.get("normalization") or "")}</code></td></tr>
+    <tr><th>measured on</th><td>{html.escape(cpu.get("measured_on_codec") or "")}</td></tr>
+  </table>
+  <details><summary>thresholds_used</summary>
+    <pre><code>{thresholds_json}</code></pre>
+  </details>
+</section>
+'''
+
     toolchain = _toolchain_fingerprint(run_dir)
     toolchain_rows = "".join(
         f"<tr><th>{html.escape(k)}</th><td><code>{html.escape(str(v))}</code></td></tr>"
@@ -211,13 +245,14 @@ code {{ background: #f5f5f7; padding: 1px 4px; border-radius: 3px; }}
 <div class="banner"><strong>Internal use only.</strong> This report is not exposed to contestants.</div>
 
 <h1>Evaluator report</h1>
-<p class="summary-big">{score.get("objective_total", 0)} / {score.get("max_score", 30)}</p>
+<p class="summary-big">{score.get("objective_total", 0)} / {score.get("max_score", 40)}</p>
 
 <section>
   <h2>Summary</h2>
   <table>
     <tr><th>H.264 subtotal</th><td>{h264.get("total", 0)}/15</td></tr>
     <tr><th>H.265 subtotal</th><td>{h265.get("total", 0)}/15</td></tr>
+    <tr><th>CPU subtotal</th><td>{cpu.get("points", 0)}/10{' (gated)' if cpu.get('gated') else ''}</td></tr>
     <tr><th>top-level reason</th><td>{html.escape(score.get("reason") or "")}</td></tr>
     <tr><th>Chromium</th><td><code>{html.escape(score.get("chromium_version") or "")}</code></td></tr>
     {toolchain_rows}
@@ -234,6 +269,7 @@ code {{ background: #f5f5f7; padding: 1px 4px; border-radius: 3px; }}
 
 {codec_block("H264", h264, h264_metrics)}
 {codec_block("H265", h265, h265_metrics)}
+{cpu_section()}
 </body></html>
 '''
     output.write_text(body)
