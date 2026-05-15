@@ -35,7 +35,7 @@
 - [x] 4.3 Record `capture_started_at_epoch` and `capture_ended_at_epoch` (use `time.time()`) bracketing the steady-state loop
 - [x] 4.4 Write `<screenshots_dir>/capture_meta.json` with the documented shape: top-level `codec`, `capture_started_at_epoch`, `capture_ended_at_epoch`, and nested `cpu` (the `SampleResult` as a dict, or `null` if sampler was not started or returned `mean_percent=None`)
 - [x] 4.5 For `--codec h264` or for `h265` without `--contestant-pgid`: do NOT write `capture_meta.json` (preserves backward compatibility with direct `_cli` invocations)
-- [ ] 4.6 Manual sanity check: `.venv/bin/python runner.py --codec h265 --contestant-pgid $$ --duration 2 --fps 1 --output /tmp/_sanity` against a hand-rolled fake frontend (or document why a more targeted unit test stands in for this); inspect `capture_meta.json`  *(deferred — covered by tests/test_cpu_sampler.py for the sampler path; full runner sanity needs a live frontend, run at verify time)*
+- [x] 4.6 Manual sanity check: `.venv/bin/python runner.py --codec h265 --contestant-pgid $$ --duration 2 --fps 1 --output /tmp/_sanity` against a hand-rolled fake frontend (or document why a more targeted unit test stands in for this); inspect `capture_meta.json`  *(verified via scripts/test.sh — fake_overlay / iframe_only / static_frame all produced capture_meta.json with valid cpu blocks at sample_count≈44, sample_hz_used=1.0)*
 
 ## 5. Analyzer integration (`analyzer.py`)
 
@@ -49,7 +49,7 @@
 - [x] 6.1 In the H.265 runner invocation, append `--contestant-pgid "$(cat "${ROOT_DIR}/results/${RESULTS_SUBDIR}/contestant.pid")"` only when that file exists (so the script remains tolerant of being invoked outside the wrapper's lifecycle)
 - [x] 6.2 Do NOT touch the H.264 runner invocation
 - [x] 6.3 Confirm `evaluator-host.sh` container path does NOT pass `--contestant-pgid` (the container can't read the host's `/proc` for those PIDs); arrange so the scorer outputs `gate_reason="container_mode_unsupported"`. Most natural place: have the host wrapper invoke `scorer.py --failure-reason container_mode_unsupported` only for the CPU block when running containerized, OR have the scorer detect missing `cpu` field + the container marker file and synthesize the gate. Pick the simpler of the two during 3.7 and document the choice inline
-- [ ] 6.4 Re-run `scripts/evaluator-local.sh <team> test_submissions/reference.zip` and confirm `results/<run>/score.json` contains a populated `cpu` block (likely gated by `h265_fps_below_threshold` since reference fails H.265 on the canonical host — that's the expected state)  *(deferred — needs MediaMTX/Chrome/Playwright; synthetic scorer.build_score call confirmed identical score.json shape)*
+- [x] 6.4 Re-run `scripts/evaluator-local.sh <team> test_submissions/reference.zip` and confirm `results/<run>/score.json` contains a populated `cpu` block (likely gated by `h265_fps_below_threshold` since reference fails H.265 on the canonical host — that's the expected state)  *(verified — results/sanity_e2e_20260515_112129: max_score=40, h264=15, h265 startup-timeout, cpu.gated=true with gate_reason="h265_round_failed", objective_total=15)*
 
 ## 7. Report (`report.py` / report.html template)
 
@@ -65,7 +65,7 @@
 
 ## 9. End-to-end validation
 
-- [ ] 9.1 Run `scripts/test.sh` (default mode) and confirm: reference.zip still passes the `total_ge:13` gate (expected: H.264=15, H.265=0, CPU=0 gated → total=15 ≥ 13); negative-case fixtures continue to fail as expected; no test case crashes  *(deferred — full E2E across 7 fixtures × ~30s capture each; run at verify time once Chrome/MediaMTX env is verified)*
+- [x] 9.1 Run `scripts/test.sh` (default mode) and confirm: reference.zip still passes the `total_ge:13` gate (expected: H.264=15, H.265=0, CPU=0 gated → total=15 ≥ 13); negative-case fixtures continue to fail as expected; no test case crashes  *(verified — scripts/test.sh PASS 7/7, exit 0. capture_meta.json correctly written only by fake_overlay/iframe_only/static_frame H.265 rounds that survive readiness; never written for h264; absent for fixtures that fail before capture)*
 - [x] 9.2 Spot-check one `score.json` shape against the spec: 40 max_score, `cpu` block has all 10 keys including the 6-field `thresholds_used`, `objective_total = h264.total + h265.total + cpu.points`
 - [x] 9.3 Confirm `pytest tests/ -q` exits green
 - [x] 9.4 Run a Python syntax-only re-import smoke: `.venv/bin/python -c "import runner, analyzer, scorer, _cpu_sampler; print('ok')"`
