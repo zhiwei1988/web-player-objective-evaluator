@@ -5,6 +5,10 @@
 # or scripts/evaluator-local.sh (build host shortcut). MediaMTX is brought
 # up AND torn down by this script per run; it is no longer shared with a
 # host-resident daemon.
+#
+# Per-profile parameters (resolution, fps, reference dir, CPU sampling) come
+# from lib/profiles.py::PROFILES; this script iterates that registry rather
+# than hard-coding profile names.
 
 set -uo pipefail
 # NB: not `set -e` — we want explicit failure handling per step so the score JSON
@@ -46,10 +50,6 @@ RUN_DIR="${ROOT_DIR}/results/${RESULTS_SUBDIR}"
 LOG_FILE="${RUN_DIR}/evaluator.log"
 SCORE_FILE="${RUN_DIR}/score.json"
 REPORT_FILE="${RUN_DIR}/report.html"
-H264_SHOTS="${RUN_DIR}/h264_screenshots"
-H265_SHOTS="${RUN_DIR}/h265_screenshots"
-H264_METRICS="${RUN_DIR}/h264_metrics.json"
-H265_METRICS="${RUN_DIR}/h265_metrics.json"
 
 # Tee all log lines to the run log, but keep stdout for the final score JSON.
 exec 3>&1
@@ -58,22 +58,30 @@ exec > >(tee -a "${LOG_FILE}" >&2) 2>&1
 log()  { printf '[evaluator] %s\n' "$*"; }
 die()  { printf 'evaluator failed: %s\n' "$*"; }
 
-# State shared with the cleanup trap.
+# Read profile names from the single truth source.
+mapfile -t PROFILES_TO_RUN < <(.venv/bin/python -c \
+    "from lib.profiles import PROFILES; print('\n'.join(sorted(PROFILES.keys())))")
+(( ${#PROFILES_TO_RUN[@]} > 0 )) || { die "no profiles defined in lib.profiles.PROFILES"; exit 71; }
+
+# Per-profile state populated by the capture loop.
+declare -A PROFILE_REASON=()
+declare -A METRICS_PATH
+
 FAILURE_REASON=""
-H264_REASON=""
-H265_REASON=""
 
 write_failure_score() {
     local reason="$1"
     log "writing failure score (${reason})"
-    "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scorer.py" \
-        --output "${SCORE_FILE}" \
-        --report "${REPORT_FILE}" \
-        --install-prefix "${ROOT_DIR}/third_party/install" \
-        --failure-reason "${reason}" \
-        ${H264_REASON:+--h264-reason "${H264_REASON}"} \
-        ${H265_REASON:+--h265-reason "${H265_REASON}"} \
-        >/dev/null 2>&1 || true
+    local args=(--output "${SCORE_FILE}"
+                --report "${REPORT_FILE}"
+                --install-prefix "${ROOT_DIR}/third_party/install"
+                --failure-reason "${reason}")
+    local profile r
+    for profile in "${PROFILES_TO_RUN[@]}"; do
+        r="${PROFILE_REASON[${profile}]:-}"
+        [[ -n "${r}" ]] && args+=(--profile-reason "${profile}=${r}")
+    done
+    "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scorer.py" "${args[@]}" >/dev/null 2>&1 || true
 }
 
 stop_mediamtx() {
@@ -109,6 +117,7 @@ trap cleanup EXIT INT TERM
 
 log "starting run team_id=${TEAM_ID} run_dir=${RUN_DIR}"
 log "chromium=$(tr '\n' ' ' < "${ROOT_DIR}/third_party/install/playwright_chromium.version" 2>/dev/null)"
+log "profiles=${PROFILES_TO_RUN[*]}"
 
 # Bring MediaMTX up for this run.
 log "starting RTSP server"
@@ -117,26 +126,26 @@ if ! "${SCRIPT_DIR}/start_rtsp.sh"; then
     log "${FAILURE_REASON}"
     exit 70
 fi
-if ! "${SCRIPT_DIR}/health_check.sh" h264 15; then
-    FAILURE_REASON="rtsp infrastructure failure (h264 unreadable)"
-    log "${FAILURE_REASON}"
-    exit 70
-fi
-if ! "${SCRIPT_DIR}/health_check.sh" h265 15; then
-    FAILURE_REASON="rtsp infrastructure failure (h265 unreadable)"
-    log "${FAILURE_REASON}"
-    exit 70
-fi
+for profile in "${PROFILES_TO_RUN[@]}"; do
+    if ! "${SCRIPT_DIR}/health_check.sh" "${profile}" 15; then
+        FAILURE_REASON="rtsp infrastructure failure (${profile} unreadable)"
+        log "${FAILURE_REASON}"
+        exit 70
+    fi
+done
 
-# Run captures. We do not let a single round's failure abort the other one.
+# Captures. A single profile's failure does not abort the other profile.
 run_capture() {
-    local codec="$1" out="$2"
-    log "running runner.py --codec ${codec}"
+    local profile="$1" out="$2"
+    log "running runner.py --profile ${profile}"
 
-    # Only H.265 round samples CPU. PGID comes from the wrapper's
-    # clx_start_contestant (setsid → SID == PGID == CONTESTANT_PID).
+    # CPU sampling is opt-in per profile via PROFILES[profile].cpu_sampled.
+    # PGID comes from the wrapper's clx_start_contestant (setsid → SID==PGID).
     local extra_args=()
-    if [[ "${codec}" == "h265" && -f "${RUN_DIR}/contestant.pid" ]]; then
+    local cpu_sampled
+    cpu_sampled="$(.venv/bin/python -c \
+        "from lib.profiles import PROFILES; print('1' if PROFILES['${profile}'].cpu_sampled else '0')")"
+    if [[ "${cpu_sampled}" == "1" && -f "${RUN_DIR}/contestant.pid" ]]; then
         local pgid
         pgid="$(cat "${RUN_DIR}/contestant.pid" 2>/dev/null || true)"
         if [[ -n "${pgid}" ]]; then
@@ -144,46 +153,58 @@ run_capture() {
         fi
     fi
 
+    # Per-profile fps from the registry — keep evaluator's capture cadence
+    # tied to the source mp4's framerate.
+    local profile_fps
+    profile_fps="$(.venv/bin/python -c \
+        "from lib.profiles import PROFILES; print(PROFILES['${profile}'].fps)")"
+
     if "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/runner.py" \
-            --codec "${codec}" --output "${out}" --duration 30 --fps 30 \
+            --profile "${profile}" --output "${out}" \
+            --duration 30 --fps "${profile_fps}" \
             "${extra_args[@]}"; then
         return 0
     fi
     # runner.py wrote timestamps.json with the reason; surface it.
     local reason
     reason="$(python3 -c "import json,sys;print(json.load(open('${out}/timestamps.json')).get('reason') or '')" 2>/dev/null || true)"
-    log "  ${codec} runner failed: ${reason}"
-    if [[ "${codec}" == "h264" ]]; then H264_REASON="${reason}"; else H265_REASON="${reason}"; fi
+    log "  ${profile} runner failed: ${reason}"
+    PROFILE_REASON[${profile}]="${reason}"
     return 1
 }
 
-run_capture h264 "${H264_SHOTS}" || true
-run_capture h265 "${H265_SHOTS}" || true
-
-# Analyze each codec whose screenshots directory has files.
-analyze_codec() {
-    local codec="$1" shots="$2" metrics="$3" refdir="${ROOT_DIR}/reference/$1"
+analyze_profile() {
+    local profile="$1" shots="$2" metrics="$3"
+    local refdir
+    refdir="$(.venv/bin/python -c "from lib.profiles import PROFILES; print(PROFILES['${profile}'].reference_dir)")"
     if ! compgen -G "${shots}/shot_*.png" >/dev/null && ! compgen -G "${shots}/shot_*.jpg" >/dev/null; then
-        log "no ${codec} screenshots — skipping analyzer"
+        log "no ${profile} screenshots — skipping analyzer"
         return 1
     fi
     "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/analyzer.py" \
-        --codec "${codec}" \
+        --profile "${profile}" \
         --screenshots "${shots}" \
-        --reference "${refdir}" \
+        --reference "${ROOT_DIR}/${refdir}" \
         --output "${metrics}"
 }
 
-analyze_codec h264 "${H264_SHOTS}" "${H264_METRICS}" || true
-analyze_codec h265 "${H265_SHOTS}" "${H265_METRICS}" || true
+for profile in "${PROFILES_TO_RUN[@]}"; do
+    shots_dir="${RUN_DIR}/${profile}_screenshots"
+    metrics_path="${RUN_DIR}/${profile}_metrics.json"
+    METRICS_PATH[${profile}]="${metrics_path}"
+    run_capture "${profile}" "${shots_dir}" || true
+    analyze_profile "${profile}" "${shots_dir}" "${metrics_path}" || true
+done
 
 # Score + report.
 SCORER_ARGS=(--output "${SCORE_FILE}" --report "${REPORT_FILE}"
              --install-prefix "${ROOT_DIR}/third_party/install")
-[[ -f "${H264_METRICS}" ]] && SCORER_ARGS+=(--h264 "${H264_METRICS}")
-[[ -f "${H265_METRICS}" ]] && SCORER_ARGS+=(--h265 "${H265_METRICS}")
-[[ -n "${H264_REASON}" ]] && SCORER_ARGS+=(--h264-reason "${H264_REASON}")
-[[ -n "${H265_REASON}" ]] && SCORER_ARGS+=(--h265-reason "${H265_REASON}")
+for profile in "${PROFILES_TO_RUN[@]}"; do
+    metrics_path="${METRICS_PATH[${profile}]}"
+    [[ -f "${metrics_path}" ]] && SCORER_ARGS+=(--metrics "${profile}=${metrics_path}")
+    reason="${PROFILE_REASON[${profile}]:-}"
+    [[ -n "${reason}" ]] && SCORER_ARGS+=(--profile-reason "${profile}=${reason}")
+done
 
 "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scorer.py" "${SCORER_ARGS[@]}" >/dev/null
 

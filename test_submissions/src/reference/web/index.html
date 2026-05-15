@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Reference player (self-test)</title>
+<title>Reference player (self-test, frame cycler)</title>
 <style>
   html, body { margin: 0; padding: 0; background: #000; }
   #player {
@@ -14,29 +14,35 @@
 </style>
 </head>
 <body>
-<video id="player" data-testid="player-video" autoplay muted playsinline></video>
+<img id="player" data-testid="player-video" alt="">
 <script>
 (() => {
+  // Self-test fixture: cycle through the per-profile reference PNG sequence
+  // at the profile's native 25 fps. A real contestant would decode an HEVC
+  // RTSP stream here; this stub feeds the evaluator the exact frames it
+  // would have produced from a perfect decode, so the capture/analyze/score
+  // pipeline can be exercised end-to-end on hosts where Chrome can't HEVC-
+  // decode via <video>.
   const params = new URLSearchParams(window.location.search);
-  const codec = params.get('codec') === 'h265' ? 'h265' : 'h264';
-  const autoplay = params.get('autoplay') === '1';
+  const profile = params.get('profile') === '4k' ? '4k' : '2k';
+
+  // Match the watermark generator: 25 fps × 30 s duration = 750 frames.
+  const TOTAL = 750;
+  const FPS = 25;
+  const pad = (n) => String(n).padStart(5, '0');
 
   const player = document.getElementById('player');
-  player.src = `/${codec}.mp4`;
-  player.loop = true;
-
-  player.addEventListener('loadeddata', () => { window.__PLAYER_READY__ = true; });
-  player.addEventListener('error', (e) => {
-    window.__PLAYER_ERROR__ = `video error: ${player.error && player.error.message || 'unknown'}`;
+  let i = 0;
+  player.src = `/${profile}/frame_${pad(0)}.png`;
+  player.addEventListener('load', () => { window.__PLAYER_READY__ = true; }, { once: true });
+  player.addEventListener('error', () => {
+    window.__PLAYER_ERROR__ = 'reference frame load failed';
   });
 
-  if (autoplay) {
-    const tryPlay = () => player.play().catch(err => {
-      window.__PLAYER_ERROR__ = `play() rejected: ${err.message}`;
-    });
-    if (player.readyState >= 2) tryPlay();
-    else player.addEventListener('loadeddata', tryPlay, { once: true });
-  }
+  setInterval(() => {
+    i = (i + 1) % TOTAL;
+    player.src = `/${profile}/frame_${pad(i)}.png`;
+  }, 1000 / FPS);
 })();
 </script>
 </body>

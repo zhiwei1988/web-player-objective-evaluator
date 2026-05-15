@@ -1,5 +1,5 @@
-"""Static-frame self-test server. Routes /play → index.html, serves /h264.png and
-/h265.png from web/."""
+"""Static-frame self-test server. Routes /play → index.html, serves /2k.png and
+/4k.png from web/."""
 
 from __future__ import annotations
 

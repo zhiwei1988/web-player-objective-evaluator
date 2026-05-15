@@ -1,7 +1,11 @@
 # MediaMTX configuration for the objective evaluator.
-# Listens on :8554 only; forces RTSP-over-TCP for both client and contestant traffic.
+# Listens on :554 only; forces RTSP-over-TCP for both client and contestant traffic.
 # The two paths use ffmpeg's on-demand publish mode: when a reader connects,
 # MediaMTX spawns ffmpeg to loop the pre-encoded MP4 with -c:v copy (no re-encode).
+#
+# Port 554 is below 1024 and requires CAP_NET_BIND_SERVICE on the mediamtx
+# binary (set by scripts/build.sh on the build host) or --cap-add=NET_BIND_SERVICE
+# on the docker run (set by scripts/evaluator-host.sh in the container path).
 #
 # IMPORTANT: MediaMTX does NOT expand env vars or templates in YAML string values.
 # The `-i streams/...` path is RELATIVE; scripts/start_rtsp.sh `cd`s into the repo
@@ -13,7 +17,7 @@ logDestinations: [stdout]
 # Disable everything except RTSP-TCP.
 rtsp: yes
 protocols: [tcp]
-rtspAddress: :8554
+rtspAddress: :554
 rtmp: no
 hls: no
 webrtc: no
@@ -24,24 +28,24 @@ pprof: no
 playback: no
 
 paths:
-  test/h264:
+  test/h265_2560_1440:
     runOnDemand: >-
       ffmpeg -hide_banner -loglevel warning
       -re -stream_loop -1
-      -i streams/h264_watermarked.mp4
+      -i streams/h265_2560_1440.mp4
       -c:v copy -an -f rtsp
       -rtsp_transport tcp
-      rtsp://127.0.0.1:8554/test/h264
+      rtsp://127.0.0.1:554/test/h265_2560_1440
     runOnDemandRestart: yes
     runOnDemandCloseAfter: 10s
 
-  test/h265:
+  test/h265_3840_2160:
     runOnDemand: >-
       ffmpeg -hide_banner -loglevel warning
       -re -stream_loop -1
-      -i streams/h265_watermarked.mp4
+      -i streams/h265_3840_2160.mp4
       -c:v copy -an -f rtsp
       -rtsp_transport tcp
-      rtsp://127.0.0.1:8554/test/h265
+      rtsp://127.0.0.1:554/test/h265_3840_2160
     runOnDemandRestart: yes
     runOnDemandCloseAfter: 10s

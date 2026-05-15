@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Bring the evaluator to a ready state: streams generated, RTSP up, health-check passes.
-# Idempotent: skips stream regeneration if up to date, restarts MediaMTX if it has died.
+# Build-host development helper: ensure watermarked reference streams exist and
+# are fresh. RTSP server lifecycle is owned per-run by scripts/evaluator.sh —
+# this script no longer starts MediaMTX. After a successful deploy.sh, run
+# scripts/evaluator-local.sh (or scripts/evaluator-host.sh in containerized
+# mode) to actually execute an evaluation; MediaMTX will be brought up and
+# torn down inside that lifecycle.
 
 set -euo pipefail
 
@@ -12,30 +16,27 @@ source "${SCRIPT_DIR}/env.sh"
 log()  { printf '[deploy] %s\n' "$*" >&2; }
 die()  { printf 'deploy failed: %s\n' "$*" >&2; exit 1; }
 
+# Stream paths come from lib/profiles.py — keep this in lockstep with the
+# registry. ensure_streams runs prepare_streams.sh which is the source of
+# truth for filenames.
 ensure_streams() {
-    local h264="${ROOT_DIR}/streams/h264_watermarked.mp4"
-    local h265="${ROOT_DIR}/streams/h265_watermarked.mp4"
     local script="${ROOT_DIR}/lib/watermark.py"
-    if [[ -f "${h264}" && -f "${h265}" \
-          && "${h264}" -nt "${script}" && "${h265}" -nt "${script}" ]]; then
+    # Collect expected mp4 paths from the profile registry.
+    mapfile -t expected_mp4s < <(.venv/bin/python -c \
+        "from lib.profiles import PROFILES; print('\n'.join(s.stream_file for s in PROFILES.values()))")
+    local mp4 stale=0
+    for mp4 in "${expected_mp4s[@]}"; do
+        local abs="${ROOT_DIR}/${mp4}"
+        if [[ ! -f "${abs}" || "${abs}" -ot "${script}" ]]; then
+            stale=1; break
+        fi
+    done
+    if (( ! stale )); then
         log "streams up to date"
         return 0
     fi
     log "regenerating watermarked streams (this takes a couple minutes)"
     "${SCRIPT_DIR}/prepare_streams.sh"
-}
-
-ensure_rtsp() {
-    log "starting RTSP server"
-    "${SCRIPT_DIR}/start_rtsp.sh"
-}
-
-health_check() {
-    log "RTSP health check"
-    "${SCRIPT_DIR}/health_check.sh" h264 \
-        || die "rtsp h264 health check failed"
-    "${SCRIPT_DIR}/health_check.sh" h265 \
-        || die "rtsp h265 health check failed"
 }
 
 main() {
@@ -44,9 +45,7 @@ main() {
     [[ -x "${ROOT_DIR}/third_party/install/bin/mediamtx" ]] \
         || die "mediamtx missing under third_party/install/bin — run scripts/build.sh first"
     ensure_streams
-    ensure_rtsp
-    health_check
-    printf 'deploy ok: ready for submissions\n'
+    printf 'deploy ok: streams ready (RTSP server starts per-run via evaluator.sh)\n'
 }
 
 main "$@"

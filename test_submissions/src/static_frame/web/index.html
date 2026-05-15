@@ -5,10 +5,10 @@
 <body>
 <img id="p" data-testid="player-video" alt="">
 <script>
-const codec = new URLSearchParams(location.search).get('codec') === 'h265' ? 'h265' : 'h264';
+const profile = new URLSearchParams(location.search).get('profile') === '4k' ? '4k' : '2k';
 const p = document.getElementById('p');
 p.onload = () => { window.__PLAYER_READY__ = true; };
 p.onerror = () => { window.__PLAYER_ERROR__ = 'static img load failed'; };
-p.src = `/${codec}.png`;
+p.src = `/${profile}.png`;
 </script>
 </body></html>

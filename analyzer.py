@@ -24,6 +24,8 @@ from PIL import Image
 from pylibdmtx.pylibdmtx import decode as dmtx_decode
 from skimage.metrics import structural_similarity as ssim
 
+from lib.profiles import PROFILES
+
 
 # Must mirror lib/watermark.py:WatermarkLayout.
 COLOR_TARGETS = (
@@ -195,7 +197,7 @@ def compute_ssim(shot: Image.Image, reference: Image.Image) -> float:
 
 # ---- Main pipeline -----------------------------------------------------------
 
-def analyze(codec: str, screenshots_dir: Path, reference_dir: Path) -> CodecMetrics:
+def analyze(profile: str, screenshots_dir: Path, reference_dir: Path) -> CodecMetrics:
     metrics = CodecMetrics()
     shots = sorted([
         *screenshots_dir.glob("shot_*.png"),
@@ -286,13 +288,14 @@ def metrics_to_dict(m: CodecMetrics) -> dict:
 
 def _cli() -> int:
     p = argparse.ArgumentParser(description="Analyze captured screenshots.")
-    p.add_argument("--codec", required=True, choices=("h264", "h265"))
+    p.add_argument("--profile", required=True, choices=sorted(PROFILES.keys()),
+                   help="Resolution profile key from lib.profiles.PROFILES.")
     p.add_argument("--screenshots", required=True, type=Path)
     p.add_argument("--reference", required=True, type=Path)
     p.add_argument("--output", required=True, type=Path)
     args = p.parse_args()
 
-    metrics = analyze(args.codec, args.screenshots, args.reference)
+    metrics = analyze(args.profile, args.screenshots, args.reference)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     metrics_dict = metrics_to_dict(metrics)
     # Forward the runner's CPU sample summary if it left one. analyzer.py
@@ -309,7 +312,7 @@ def _cli() -> int:
             pass
     args.output.write_text(json.dumps(metrics_dict, indent=2))
     print(json.dumps({
-        "codec": args.codec,
+        "profile": args.profile,
         "watermark_recognition_rate": metrics.watermark_recognition_rate,
         "color_check_rate": metrics.color_check_rate,
         "mean_ssim": metrics.mean_ssim,

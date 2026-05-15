@@ -41,8 +41,9 @@ class WatermarkLayout:
     """Pixel regions for each watermark element, scaled to the target frame size.
 
     `analyzer.py` MUST stay in sync with these proportions. We compute them
-    from the frame dimensions so a single layout works for both 1920x1080 and
-    2560x1440.
+    from the frame dimensions so a single layout works for all profile
+    resolutions (currently 2560x1440 and 3840x2160; was 1920x1080 H.264
+    before the switch to resolution-profile evaluation).
     """
     width: int
     height: int
@@ -235,16 +236,32 @@ def write_sequence(out_dir: Path, width: int, height: int, fps: float, duration_
 # ---- CLI ---------------------------------------------------------------------
 
 def _cli() -> int:
+    from lib.profiles import PROFILES
+
     p = argparse.ArgumentParser(description="Generate watermarked reference frames.")
-    p.add_argument("--codec", required=True, choices=("h264", "h265"))
-    p.add_argument("--width", type=int, required=True)
-    p.add_argument("--height", type=int, required=True)
-    p.add_argument("--fps", type=float, required=True)
-    p.add_argument("--duration", type=float, required=True, help="Seconds.")
-    p.add_argument("--out", type=Path, required=True, help="Output directory.")
+    p.add_argument("--profile", required=True, choices=sorted(PROFILES.keys()),
+                   help="Resolution profile key from lib.profiles.PROFILES.")
+    p.add_argument("--width", type=int, default=None,
+                   help="Override profile width (debug only).")
+    p.add_argument("--height", type=int, default=None,
+                   help="Override profile height (debug only).")
+    p.add_argument("--fps", type=float, default=None,
+                   help="Override profile fps (debug only).")
+    p.add_argument("--duration", type=float, default=None,
+                   help="Override profile duration in seconds (debug only).")
+    p.add_argument("--out", type=Path, default=None,
+                   help="Override output directory (default: profile's reference_dir).")
     args = p.parse_args()
-    n = write_sequence(args.out, args.width, args.height, args.fps, args.duration)
-    print(f"wrote {n} frames to {args.out}")
+
+    spec = PROFILES[args.profile]
+    width = args.width or spec.width
+    height = args.height or spec.height
+    fps = args.fps or spec.fps
+    duration = args.duration or spec.duration_s
+    out_dir = args.out or Path(spec.reference_dir)
+
+    n = write_sequence(out_dir, width, height, fps, duration)
+    print(f"wrote {n} frames to {out_dir}")
     return 0
 
 

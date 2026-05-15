@@ -204,6 +204,10 @@ build_mediamtx() {
     local src="${THIRD_PARTY}/mediamtx"
     if is_fresh "${marker}" "${src}/main.go" "${src}/go.sum"; then
         log "mediamtx: up to date"
+        # Capability is applied to the binary, not the source — re-check on
+        # every run so an existing binary built before the setcap step was
+        # added still gets the capability.
+        apply_mediamtx_cap
         return 0
     fi
     log "mediamtx: go generate (embeds VERSION + downloads hls.min.js)"
@@ -231,6 +235,59 @@ build_mediamtx() {
         cd "${src}"
         go build -o "${INSTALL_PREFIX}/bin/mediamtx" .
     )
+    apply_mediamtx_cap
+}
+
+# MediaMTX listens on :554, a privileged port (<1024). Granting
+# CAP_NET_BIND_SERVICE on the binary lets it bind that port without running
+# as root. The container path achieves the same via --cap-add=NET_BIND_SERVICE
+# in scripts/evaluator-host.sh; this step covers the host-native path
+# (scripts/evaluator-local.sh + scripts/deploy.sh).
+apply_mediamtx_cap() {
+    local bin="${INSTALL_PREFIX}/bin/mediamtx"
+    command -v setcap >/dev/null \
+        || die "setcap not on PATH; install libcap2-bin and re-run"
+    # Skip if already applied so re-runs don't prompt for sudo unnecessarily.
+    if getcap "${bin}" 2>/dev/null | grep -q "cap_net_bind_service=ep"; then
+        log "mediamtx: cap_net_bind_service already set"
+        return 0
+    fi
+    log "applying cap_net_bind_service to mediamtx (requires sudo)"
+    if [[ $EUID -eq 0 ]]; then
+        setcap cap_net_bind_service=+ep "${bin}"
+    else
+        sudo -n setcap cap_net_bind_service=+ep "${bin}" 2>/dev/null \
+            || sudo setcap cap_net_bind_service=+ep "${bin}" \
+            || die "setcap on mediamtx failed; cannot bind :554 natively"
+    fi
+    getcap "${bin}"
+}
+
+# Register third_party/install/lib with the system dynamic linker cache.
+# Without this, mediamtx (which has CAP_NET_BIND_SERVICE via setcap) runs in
+# secure-exec mode and the kernel strips LD_LIBRARY_PATH on exec; any ffmpeg
+# subprocess it spawns then fails to load libx264/libx265/libdmtx from the
+# source-built prefix. Registration via /etc/ld.so.conf.d/ makes the linker
+# find them without env vars. Mirrors the Dockerfile's runtime-stage step.
+apply_ldconfig() {
+    local conf=/etc/ld.so.conf.d/evaluator.conf
+    local libdir="${INSTALL_PREFIX}/lib"
+    # Skip if the conf already points at our libdir AND the cache resolves a
+    # known library (libx264). Re-runs stay silent on healthy hosts.
+    if [[ -r "${conf}" ]] && grep -qx "${libdir}" "${conf}" \
+            && ldconfig -p 2>/dev/null | grep -q "${libdir}/libx264"; then
+        log "ldconfig: ${libdir} already registered"
+        return 0
+    fi
+    log "registering ${libdir} with ldconfig (requires sudo)"
+    if [[ $EUID -eq 0 ]]; then
+        printf '%s\n' "${libdir}" > "${conf}"
+        ldconfig
+    else
+        sudo -n bash -c "printf '%s\n' '${libdir}' > '${conf}' && ldconfig" 2>/dev/null \
+            || sudo bash -c "printf '%s\n' '${libdir}' > '${conf}' && ldconfig" \
+            || die "ldconfig registration failed; setcap'd mediamtx will not find libx264 at runtime"
+    fi
 }
 
 install_python() {
@@ -277,6 +334,7 @@ main() {
     build_x265
     build_ffmpeg
     build_mediamtx
+    apply_ldconfig
     install_python
     install_chromium
 

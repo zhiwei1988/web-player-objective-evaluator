@@ -41,7 +41,7 @@ from pathlib import Path
 
 
 DEFAULT_SAMPLE_HZ: float = 1.0
-"""Tunable: sampler tick rate (Hz). 1.0 gives ~10 samples over a 10s H.265
+"""Tunable: sampler tick rate (Hz). 1.0 gives ~30 samples over a 30s 4K profile
 capture window — coarse but enough for a steady-state mean. Raise during
 debugging via runner.py --cpu-sample-hz; fold back to a pure constant once
 calibration is done."""

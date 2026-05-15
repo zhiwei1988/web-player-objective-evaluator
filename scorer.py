@@ -1,9 +1,9 @@
-"""Score the analyzer's metrics into the final 40-point objective total.
+"""Score the analyzer's metrics into the final 30-point objective total.
 
-10 correctness points + 5 FPS points per codec (two codecs = 30) plus a
-0–10 CPU sub-score sampled during the H.265 round. Thresholds are
-duplicated from openspec/specs/evaluator/spec.md and design.md; bumping one
-without bumping the others is a regression.
+5 correctness points + 5 FPS points per profile (two profiles = 20) plus a
+0–10 CPU sub-score sampled during the 4K profile capture window. Thresholds
+are duplicated from openspec/specs/evaluator/spec.md and design.md; bumping
+one without bumping the others is a regression.
 """
 
 from __future__ import annotations
@@ -13,14 +13,16 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from lib.profiles import PROFILES
 
-EXPECTED_FPS = {"h264": 30.0, "h265": 25.0}
+
+EXPECTED_FPS: dict[str, float] = {name: float(spec.fps) for name, spec in PROFILES.items()}
 
 
 # CPU sub-score tunables. Module-level so calibration is a one-line change.
 # Effective values applied to each run are echoed into score.json.cpu.thresholds_used.
-CPU_GATE_H265_FPS_RATIO: float = 0.25
-"""measured_h265_fps / expected_h265_fps below this → CPU score gated to 0.
+CPU_GATE_FPS_RATIO: float = 0.25
+"""measured_4k_fps / expected_4k_fps below this → CPU score gated to 0.
 Default mirrors score_fps's partial-credit threshold."""
 
 CPU_FULL_THRESHOLD_PERCENT: float = 5.0
@@ -37,8 +39,8 @@ CPU_MIN_SAMPLES: int = 3
 
 
 @dataclass
-class CodecScore:
-    codec: str
+class ProfileScore:
+    profile: str
     correctness_points: int
     fps_points: int
     measured_fps: float
@@ -65,28 +67,29 @@ class CodecScore:
 
 
 def score_correctness(rate_wm: float, rate_color: float, mean_ssim: float) -> int:
+    """Correctness band, max 5 (was 10 before the codec→profile switch).
+
+    Full 5: watermark and color rates ≥0.95 AND mean SSIM ≥0.90.
+    Partial 2: watermark ≥0.80 AND mean SSIM ≥0.75 (color may be soft).
+    Zero: anything below.
+    """
     if rate_wm >= 0.95 and rate_color >= 0.95 and mean_ssim >= 0.90:
-        return 10
-    if rate_wm >= 0.80 and mean_ssim >= 0.75:
         return 5
+    if rate_wm >= 0.80 and mean_ssim >= 0.75:
+        return 2
     return 0
 
 
 def score_fps(measured: float, expected: float) -> int:
     """Score the unique-frame FPS metric.
 
-    Original spec was `|measured - expected| <= 1.0` for full marks, but in
-    practice playwright's screenshot loop on commodity hardware tops out
-    somewhere around 20-25 Hz; a contestant playing perfectly at 30 fps
-    therefore produces measured_fps in the high teens, not 30. Ratio-based
-    scoring keeps the anti-cheat signal (static + i-frame-only stay near zero)
-    while accepting capture-rate limits on the evaluator side.
+    Ratio-based scoring so the evaluator's capture-rate limits do not punish
+    contestants who are actually rendering. Anti-cheat signal (static + i-frame-only)
+    stays near zero.
 
-    Full (5): measured ≥ 50% of expected (contestant is rendering continuously
-              and we're sampling fast enough to see it).
-    Partial (3): measured ≥ 25% of expected (some motion, but reduced — e.g.
-                 i-frame-only with a non-trivial cycle).
-    Zero (0): below 25% — almost certainly a static-image or single-frame cheat.
+    Full (5): measured ≥ 50% of expected.
+    Partial (3): measured ≥ 25% of expected.
+    Zero (0): below 25%.
     """
     if expected <= 0:
         return 0
@@ -100,24 +103,24 @@ def score_fps(measured: float, expected: float) -> int:
 
 def score_cpu(
     mean_cpu_percent: float | None,
-    measured_h265_fps: float,
-    expected_h265_fps: float = EXPECTED_FPS["h265"],
-    gate_fps_ratio: float = CPU_GATE_H265_FPS_RATIO,
+    measured_4k_fps: float,
+    expected_4k_fps: float = EXPECTED_FPS["4k"],
+    gate_fps_ratio: float = CPU_GATE_FPS_RATIO,
 ) -> tuple[int, str | None]:
     """Map a measured CPU mean into 0-10 points with gating.
 
     Evaluation order (first match wins):
-        1. fps gate (round didn't really play) → 0, "h265_fps_below_threshold"
+        1. fps gate (4K round didn't really play) → 0, "4k_fps_below_threshold"
         2. mean missing/None → 0, "sampler_no_data"
         3. mean ≤ CPU_FULL_THRESHOLD_PERCENT → 10, None
         4. mean > CPU_ZERO_THRESHOLD_PERCENT  → 0, None
         5. partial band → linear decay anchored at PARTIAL_START / ZERO,
                           rounded, clamped to [0, 10]
     """
-    if expected_h265_fps <= 0:
-        return 0, "h265_fps_below_threshold"
-    if measured_h265_fps / expected_h265_fps < gate_fps_ratio:
-        return 0, "h265_fps_below_threshold"
+    if expected_4k_fps <= 0:
+        return 0, "4k_fps_below_threshold"
+    if measured_4k_fps / expected_4k_fps < gate_fps_ratio:
+        return 0, "4k_fps_below_threshold"
     if mean_cpu_percent is None:
         return 0, "sampler_no_data"
     if mean_cpu_percent <= CPU_FULL_THRESHOLD_PERCENT:
@@ -131,7 +134,7 @@ def score_cpu(
 
 def _thresholds_used(sample_hz: float | None) -> dict:
     return {
-        "gate_fps_ratio": CPU_GATE_H265_FPS_RATIO,
+        "gate_fps_ratio": CPU_GATE_FPS_RATIO,
         "full_percent": CPU_FULL_THRESHOLD_PERCENT,
         "partial_start_percent": CPU_PARTIAL_START_PERCENT,
         "zero_percent": CPU_ZERO_THRESHOLD_PERCENT,
@@ -141,17 +144,16 @@ def _thresholds_used(sample_hz: float | None) -> dict:
 
 
 def _build_cpu_block(
-    h265_metrics: dict | None,
+    profile_metrics: dict,
     cpu_override_reason: str | None,
 ) -> dict:
     """Assemble the score.json `cpu` sub-object.
 
     Precedence:
         1. cpu_override_reason (e.g. "container_mode_unsupported", "host_failure")
-        2. h265_metrics is None                  → "h265_round_failed"
-        3. h265_metrics["cpu"] missing/None      → "sampler_no_data"
-        4. h265_metrics["cpu"]["sample_count"] < CPU_MIN_SAMPLES
-                                                 → "sampler_no_data"
+        2. profile_metrics["4k"] is None                  → "4k_round_failed"
+        3. profile_metrics["4k"]["cpu"] missing/None      → "sampler_no_data"
+        4. sample_count < CPU_MIN_SAMPLES                 → "sampler_no_data"
         5. normal scoring via score_cpu
     """
     block: dict = {
@@ -161,7 +163,7 @@ def _build_cpu_block(
         "sample_window_ms": 0,
         "ncpu": None,
         "normalization": "all_cores_total",
-        "measured_on_codec": "h265",
+        "measured_on_profile": "4k",
         "thresholds_used": _thresholds_used(None),
         "gated": True,
         "gate_reason": None,
@@ -169,14 +171,16 @@ def _build_cpu_block(
     if cpu_override_reason:
         block["gate_reason"] = cpu_override_reason
         return block
-    if h265_metrics is None:
-        block["gate_reason"] = "h265_round_failed"
+
+    fourk_metrics = profile_metrics.get("4k")
+    if fourk_metrics is None:
+        block["gate_reason"] = "4k_round_failed"
         return block
 
-    cpu_in = h265_metrics.get("cpu")
-    measured_h265_fps = float(h265_metrics.get("measured_fps") or 0.0)
+    cpu_in = fourk_metrics.get("cpu")
+    measured_4k_fps = float(fourk_metrics.get("measured_fps") or 0.0)
     if cpu_in is None:
-        points, reason = score_cpu(None, measured_h265_fps)
+        points, reason = score_cpu(None, measured_4k_fps)
         block["points"] = points
         block["gate_reason"] = reason or "sampler_no_data"
         return block
@@ -196,21 +200,21 @@ def _build_cpu_block(
     block["normalization"] = cpu_in.get("normalization") or "all_cores_total"
     block["thresholds_used"] = _thresholds_used(sample_hz)
 
-    points, reason = score_cpu(mean_pct, measured_h265_fps)
+    points, reason = score_cpu(mean_pct, measured_4k_fps)
     block["points"] = points
     block["gate_reason"] = reason
     block["gated"] = reason is not None
     return block
 
 
-def score_codec(codec: str, metrics: dict) -> CodecScore:
+def score_profile(profile: str, metrics: dict) -> ProfileScore:
     rate_wm = float(metrics.get("watermark_recognition_rate") or 0.0)
     rate_color = float(metrics.get("color_check_rate") or 0.0)
     mean_ssim = float(metrics.get("mean_ssim") or 0.0)
     measured_fps = float(metrics.get("measured_fps") or 0.0)
-    expected_fps = EXPECTED_FPS[codec]
-    return CodecScore(
-        codec=codec,
+    expected_fps = EXPECTED_FPS[profile]
+    return ProfileScore(
+        profile=profile,
         correctness_points=score_correctness(rate_wm, rate_color, mean_ssim),
         fps_points=score_fps(measured_fps, expected_fps),
         measured_fps=measured_fps,
@@ -229,78 +233,94 @@ def _load_chromium_version(install_prefix: Path | None) -> str | None:
 
 
 def build_score(
-    h264_metrics: dict | None,
-    h265_metrics: dict | None,
+    profile_metrics: dict[str, dict | None],
     chromium_version: str | None,
     failure_reason: str | None = None,
     per_round_reasons: dict | None = None,
     cpu_override_reason: str | None = None,
 ) -> dict:
     out: dict = {
-        "max_score": 40,
+        "max_score": 30,
         "objective_total": 0,
-        "h264": None,
-        "h265": None,
         "cpu": None,
         "chromium_version": chromium_version,
     }
+    for profile in PROFILES:
+        out[profile] = None
+
     if failure_reason:
         out["reason"] = failure_reason
 
-    if h264_metrics is not None:
-        s = score_codec("h264", h264_metrics)
-        out["h264"] = s.to_dict()
-        out["objective_total"] += s.total
-    if h265_metrics is not None:
-        s = score_codec("h265", h265_metrics)
-        out["h265"] = s.to_dict()
+    for profile in PROFILES:
+        metrics = profile_metrics.get(profile)
+        if metrics is None:
+            continue
+        s = score_profile(profile, metrics)
+        out[profile] = s.to_dict()
         out["objective_total"] += s.total
 
     if per_round_reasons:
-        for codec, reason in per_round_reasons.items():
+        for profile, reason in per_round_reasons.items():
             if not reason:
                 continue
-            block = out.get(codec) or {}
+            block = out.get(profile) or {}
             block["reason"] = reason
-            out[codec] = block
+            out[profile] = block
 
     cpu_effective_override = cpu_override_reason
     if failure_reason and not cpu_effective_override:
         cpu_effective_override = "host_failure"
 
-    cpu_block = _build_cpu_block(h265_metrics, cpu_effective_override)
+    cpu_block = _build_cpu_block(profile_metrics, cpu_effective_override)
     out["cpu"] = cpu_block
     out["objective_total"] += cpu_block["points"]
     return out
 
 
+def _parse_kv(items: list[str], label: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for item in items:
+        if "=" not in item:
+            raise SystemExit(f"{label}: expected PROFILE=VALUE, got: {item!r}")
+        k, v = item.split("=", 1)
+        out[k] = v
+    return out
+
+
 def _cli() -> int:
     p = argparse.ArgumentParser(description="Score analyzer metrics into score.json.")
-    p.add_argument("--h264", type=Path, required=False)
-    p.add_argument("--h265", type=Path, required=False)
+    p.add_argument("--metrics", action="append", default=[],
+                   metavar="PROFILE=PATH",
+                   help="Per-profile metrics JSON (repeat once per profile).")
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--report", type=Path, required=False)
     p.add_argument("--install-prefix", type=Path, required=False,
                    help="Path to third_party/install/ for Chromium version pickup.")
     p.add_argument("--failure-reason", type=str, default=None)
-    p.add_argument("--h264-reason", type=str, default=None)
-    p.add_argument("--h265-reason", type=str, default=None)
+    p.add_argument("--profile-reason", action="append", default=[],
+                   metavar="PROFILE=REASON",
+                   help="Per-profile failure reason (repeat once per profile).")
     p.add_argument("--cpu-override-reason", type=str, default=None,
                    help="Force a gate_reason in the cpu block (used by the host "
                         "container wrapper to flag container_mode_unsupported).")
     args = p.parse_args()
 
-    def _load(path: Path | None) -> dict | None:
-        if not path or not path.exists():
-            return None
-        return json.loads(path.read_text())
+    metrics_paths = _parse_kv(args.metrics, "--metrics")
+    profile_metrics: dict[str, dict | None] = {prof: None for prof in PROFILES}
+    for profile, path_str in metrics_paths.items():
+        if profile not in PROFILES:
+            raise SystemExit(f"--metrics: unknown profile {profile!r}; "
+                             f"valid: {sorted(PROFILES.keys())}")
+        path = Path(path_str)
+        profile_metrics[profile] = json.loads(path.read_text()) if path.exists() else None
+
+    per_round_reasons = _parse_kv(args.profile_reason, "--profile-reason")
 
     score = build_score(
-        _load(args.h264),
-        _load(args.h265),
+        profile_metrics,
         _load_chromium_version(args.install_prefix),
         failure_reason=args.failure_reason,
-        per_round_reasons={"h264": args.h264_reason, "h265": args.h265_reason},
+        per_round_reasons=per_round_reasons,
         cpu_override_reason=args.cpu_override_reason,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -310,8 +330,7 @@ def _cli() -> int:
         from report import render_report
         render_report(
             score=score,
-            h264_metrics=_load(args.h264),
-            h265_metrics=_load(args.h265),
+            profile_metrics=profile_metrics,
             output=args.report,
             run_dir=args.output.parent,
         )

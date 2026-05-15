@@ -1,6 +1,6 @@
 """Playwright capture runner.
 
-Launches headless Chromium against http://localhost:8080/play?codec=<codec>&autoplay=1,
+Launches headless Chromium against http://localhost:8080/play?profile=<profile>&autoplay=1,
 waits for window.__PLAYER_READY__, and screenshots the [data-testid="player-video"]
 element at the requested rate. Element-only screenshots — never full-page — so that
 contestants cannot pass color-block checks by relying on the page background.
@@ -28,6 +28,8 @@ from playwright.sync_api import (
     sync_playwright,
 )
 
+from lib.profiles import PROFILES, FRONTEND_PORT
+
 
 READY_TIMEOUT_S = 15
 PLAYER_SELECTOR = '[data-testid="player-video"]'
@@ -46,7 +48,7 @@ class CaptureResult:
 
 
 def run_capture(
-    codec: str,
+    profile: str,
     output: Path,
     duration_s: float,
     fps: float,
@@ -54,8 +56,9 @@ def run_capture(
     cpu_sample_hz: float | None = None,
 ) -> CaptureResult:
     output.mkdir(parents=True, exist_ok=True)
+    spec = PROFILES[profile]
     result = CaptureResult(success=False)
-    url = f"http://localhost:8080/play?codec={codec}&autoplay=1"
+    url = f"http://localhost:{FRONTEND_PORT}/play?profile={profile}&autoplay=1"
 
     with sync_playwright() as p:
         # Fresh browser per codec — never reuse contexts to avoid state bleed.
@@ -232,7 +235,7 @@ def run_capture(
         import _cpu_sampler
 
         sampler: _cpu_sampler.Sampler | None = None
-        if codec == "h265" and contestant_pgid is not None:
+        if spec.cpu_sampled and contestant_pgid is not None:
             # Pluck the Playwright driver PID so the sampler can also follow
             # the Chrome subtree (where wasm / WebCodecs decode actually runs
             # for client-side-decode contestant designs). The contestant's
@@ -288,8 +291,8 @@ def run_capture(
             if sampler is not None:
                 sample_result = sampler.stop()
                 result.cpu_sample_result = sample_result.to_dict()
-            if codec == "h265" and contestant_pgid is not None:
-                _write_capture_meta(output, codec, result)
+            if spec.cpu_sampled and contestant_pgid is not None:
+                _write_capture_meta(output, profile, result)
 
         browser.close()
 
@@ -298,14 +301,14 @@ def run_capture(
     return result
 
 
-def _write_capture_meta(output: Path, codec: str, result: CaptureResult) -> None:
+def _write_capture_meta(output: Path, profile: str, result: CaptureResult) -> None:
     """Write capture_meta.json next to the screenshots.
 
     Only produced when sampling was requested. Absence is meaningful — the
     analyzer/scorer interprets it as 'sampler did not run'.
     """
     meta = {
-        "codec": codec,
+        "profile": profile,
         "capture_started_at_epoch": result.capture_started_at_epoch,
         "capture_ended_at_epoch": result.capture_ended_at_epoch,
         "cpu": result.cpu_sample_result,
@@ -330,18 +333,20 @@ def _write_timestamps(output: Path, result: CaptureResult) -> None:
 
 def _cli() -> int:
     p = argparse.ArgumentParser(description="Playwright capture runner.")
-    p.add_argument("--codec", required=True, choices=("h264", "h265"))
+    p.add_argument("--profile", required=True, choices=sorted(PROFILES.keys()),
+                   help="Resolution profile key from lib.profiles.PROFILES.")
     p.add_argument("--output", required=True, type=Path)
     p.add_argument("--duration", required=True, type=float, help="Seconds.")
     p.add_argument("--fps", required=True, type=float)
     p.add_argument("--contestant-pgid", type=int, default=None,
-                   help="When set AND --codec is h265, sample the PGID's CPU.")
+                   help="When set AND the active profile has cpu_sampled=True "
+                        "(currently 4k only), sample the PGID's CPU.")
     p.add_argument("--cpu-sample-hz", type=float, default=None,
                    help="Sampler tick rate (debug-only, will be retired once calibrated).")
     args = p.parse_args()
 
     result = run_capture(
-        args.codec, args.output, args.duration, args.fps,
+        args.profile, args.output, args.duration, args.fps,
         contestant_pgid=args.contestant_pgid,
         cpu_sample_hz=args.cpu_sample_hz,
     )

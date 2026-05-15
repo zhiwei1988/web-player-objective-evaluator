@@ -5,16 +5,16 @@
 <body>
 <img id="p" data-testid="player-video" alt="">
 <script>
-const codec = new URLSearchParams(location.search).get('codec') === 'h265' ? 'h265' : 'h264';
+const profile = new URLSearchParams(location.search).get('profile') === '4k' ? '4k' : '2k';
 const frames = [100, 200, 300, 400, 500];
 const p = document.getElementById('p');
 let i = 0;
-p.src = `/${codec}/frame_${String(frames[0]).padStart(5,'0')}.png`;
+p.src = `/${profile}/frame_${String(frames[0]).padStart(5,'0')}.png`;
 p.onload = () => { window.__PLAYER_READY__ = true; };
 // Rotate every 200ms — five frames, ~5 unique per second, 25 unique per 30s capture.
 setInterval(() => {
   i = (i + 1) % frames.length;
-  p.src = `/${codec}/frame_${String(frames[i]).padStart(5,'0')}.png`;
+  p.src = `/${profile}/frame_${String(frames[i]).padStart(5,'0')}.png`;
 }, 200);
 </script>
 </body></html>

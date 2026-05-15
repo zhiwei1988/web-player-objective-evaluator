@@ -27,8 +27,10 @@ source "${SCRIPT_DIR}/_contestant_lifecycle.sh"
 
 clx_acquire_lock
 # Only check 8080. evaluator.sh starts MediaMTX itself via the idempotent
-# scripts/start_rtsp.sh; a pre-existing MediaMTX on 8554 (e.g. from deploy.sh)
-# will be reused, then torn down by evaluator.sh's cleanup trap.
+# scripts/start_rtsp.sh; a pre-existing MediaMTX on 554 (e.g. from deploy.sh)
+# will be reused, then torn down by evaluator.sh's cleanup trap. The native
+# path relies on scripts/build.sh having setcap'd the mediamtx binary so
+# binding :554 does not need root here.
 clx_precheck_ports 8080
 clx_prepare_run_dir "${TEAM_ID}"
 

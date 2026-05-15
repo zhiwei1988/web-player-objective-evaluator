@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tear down what deploy.sh brought up: stop MediaMTX, free ports 8554 (RTSP)
+# Tear down what deploy.sh brought up: stop MediaMTX, free ports 554 (RTSP)
 # and 8080 (contestant frontend, contract).
 # Idempotent — safe to re-run, no-op if nothing is running.
 
@@ -29,11 +29,11 @@ stop_mediamtx() {
         fi
         rm -f "${PID_FILE}"
     fi
-    # Backstop: kill anything bound to :8554 (e.g. an orphaned mediamtx with
+    # Backstop: kill anything bound to :554 (e.g. an orphaned mediamtx with
     # no PID file, or an ffmpeg subprocess publishing on-demand).
-    if lsof -ti:8554 >/dev/null 2>&1; then
-        log "clearing residual processes on :8554"
-        lsof -ti:8554 | xargs -r kill -9 || true
+    if lsof -ti:554 >/dev/null 2>&1; then
+        log "clearing residual processes on :554"
+        lsof -ti:554 | xargs -r kill -9 || true
     fi
 }
 

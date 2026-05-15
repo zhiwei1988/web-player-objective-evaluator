@@ -28,12 +28,16 @@ precheck() {
     [[ -x "${ROOT_DIR}/.venv/bin/python" ]] || die "missing .venv/bin/python — run scripts/setup.sh && scripts/build.sh"
     compgen -G "${HOME}/.cache/ms-playwright/chromium-*" >/dev/null \
         || die "missing ~/.cache/ms-playwright/chromium-* — run scripts/build.sh"
-    [[ -f "${ROOT_DIR}/streams/h264_watermarked.mp4" ]] || die "missing streams — run scripts/deploy.sh"
-    [[ -f "${ROOT_DIR}/streams/h265_watermarked.mp4" ]] || die "missing streams — run scripts/deploy.sh"
-    compgen -G "${ROOT_DIR}/reference/h264/frame_*.png" >/dev/null \
-        || die "missing reference/h264/ — run scripts/deploy.sh"
-    compgen -G "${ROOT_DIR}/reference/h265/frame_*.png" >/dev/null \
-        || die "missing reference/h265/ — run scripts/deploy.sh"
+    # Per-profile stream + reference frames come from lib/profiles.py; iterate
+    # the registry rather than hard-coding paths.
+    while IFS=$'\t' read -r mp4 refdir; do
+        [[ -f "${ROOT_DIR}/${mp4}" ]] \
+            || die "missing ${mp4} — run scripts/deploy.sh"
+        compgen -G "${ROOT_DIR}/${refdir}/frame_*.png" >/dev/null \
+            || die "missing ${refdir}/ — run scripts/deploy.sh"
+    done < <(.venv/bin/python -c "from lib.profiles import PROFILES
+for s in PROFILES.values():
+    print(f'{s.stream_file}\t{s.reference_dir}')")
     command -v docker >/dev/null || die "docker not installed on build host"
     command -v jq     >/dev/null || die "jq not installed on build host"
     if (( ! USE_GZIP )); then

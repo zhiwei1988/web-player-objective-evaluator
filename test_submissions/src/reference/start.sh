@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Reference contestant submission for evaluator self-test.
 #
-# A real contestant would do live RTSP decode (MSE / WebCodecs). This stub
-# short-circuits that: it serves the evaluator's own pre-recorded
-# streams/<codec>_watermarked.mp4 directly so the evaluator pipeline (capture
-# + analyze + score + report) can be exercised end-to-end without depending on
-# Chromium being able to demux a re-muxed RTSP-pulled MP4 in headless mode.
+# A real contestant would do live RTSP decode (MSE / WebCodecs / wasm). This
+# stub short-circuits the codec layer: it symlinks the evaluator's own
+# pre-rendered reference PNG sequences (reference/<profile>/frame_NNNNN.png)
+# into its web root and lets the browser cycle through them at the profile's
+# native fps via an <img>. That exercises the full evaluator pipeline
+# (capture + analyze + score + report) without depending on Chromium being
+# able to demux HEVC in headless mode — which it can't on the canonical
+# Ubuntu 24.04 + Chrome host (no hardware HEVC).
 #
 # The RTSP code path is exercised separately by scripts/deploy.sh's
 # health_check.sh probe and by any real contestant submission.
@@ -22,15 +25,18 @@ log() { printf '[ref-start] %s\n' "$*" >&2; }
 WEB="${ROOT}/web"
 mkdir -p "${WEB}"
 
-# Symlink the pre-encoded streams into the web root under the names the
-# frontend looks for. Symlinks are fine because http.server resolves them.
-for codec in h264 h265; do
-    src="${REPO_ROOT}/streams/${codec}_watermarked.mp4"
-    dst="${WEB}/${codec}.mp4"
-    [[ -f "${src}" ]] || { log "missing ${src}"; exit 1; }
-    ln -sf "${src}" "${dst}"
+# Symlink the per-profile reference frame directories into the web root, so
+# the browser can fetch /2k/frame_NNNNN.png etc. directly.
+# PYTHONPATH because we're invoked from submissions/<id>/ (cwd != repo root).
+while IFS=$'\t' read -r profile refdir; do
+    src="${REPO_ROOT}/${refdir}"
+    dst="${WEB}/${profile}"
+    [[ -d "${src}" ]] || { log "missing ${src}"; exit 1; }
+    ln -sfn "${src}" "${dst}"
     log "linked ${dst} -> ${src}"
-done
+done < <(PYTHONPATH="${REPO_ROOT}" "${REPO_ROOT}/.venv/bin/python" -c "from lib.profiles import PROFILES
+for s in PROFILES.values():
+    print(f'{s.name}\t{s.reference_dir}')")
 
 log "starting http server on :${FE_PORT}"
 cd "${ROOT}"

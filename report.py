@@ -11,6 +11,8 @@ import html
 import json
 from pathlib import Path
 
+from lib.profiles import PROFILES
+
 # Thresholds for "suspicious" gallery picks.
 SUSPICIOUS_SSIM = 0.70
 
@@ -100,11 +102,11 @@ def _histogram_svg(values: list[float], title: str, bins: int = 20) -> str:
 '''
 
 
-def _suspicious_thumbs(codec: str, metrics: dict, run_dir: Path) -> str:
-    """Return an HTML block of suspicious screenshots for the codec."""
-    shots_dir = run_dir / f"{codec}_screenshots"
+def _suspicious_thumbs(profile: str, metrics: dict, run_dir: Path) -> str:
+    """Return an HTML block of suspicious screenshots for the profile."""
+    shots_dir = run_dir / f"{profile}_screenshots"
     if not shots_dir.exists():
-        return f'<p>no {codec} screenshots</p>'
+        return f'<p>no {profile} screenshots</p>'
     items = []
     for entry in metrics.get("per_shot", []):
         fn = entry.get("fn")
@@ -132,33 +134,32 @@ def _suspicious_thumbs(codec: str, metrics: dict, run_dir: Path) -> str:
             items.append('<p>(truncated to 24 entries — see metrics JSON for the rest)</p>')
             break
     if not items:
-        return f'<p>{codec}: no suspicious screenshots — all checks passed</p>'
+        return f'<p>{profile}: no suspicious screenshots — all checks passed</p>'
     return "".join(items)
 
 
 def render_report(
     *,
     score: dict,
-    h264_metrics: dict | None,
-    h265_metrics: dict | None,
+    profile_metrics: dict[str, dict | None],
     output: Path,
     run_dir: Path,
 ) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    h264 = score.get("h264") or {}
-    h265 = score.get("h265") or {}
 
-    def codec_block(name: str, codec_score: dict, metrics: dict | None) -> str:
-        if not codec_score:
-            return f'<section><h2>{name}</h2><p>not scored</p></section>'
-        # Partial codec_score blocks (failure cases) only carry `reason`; render
+    def profile_block(profile: str, label: str) -> str:
+        profile_score = score.get(profile) or {}
+        metrics = profile_metrics.get(profile)
+        if not profile_score:
+            return f'<section><h2>{label}</h2><p>not scored</p></section>'
+        # Partial profile_score blocks (failure cases) only carry `reason`; render
         # what we have and bail out of the metrics-dependent rows.
-        if "correctness_points" not in codec_score:
+        if "correctness_points" not in profile_score:
             return f'''
 <section>
-  <h2>{name}</h2>
+  <h2>{label}</h2>
   <table>
-    <tr><th>reason</th><td>{html.escape(codec_score.get("reason") or "")}</td></tr>
+    <tr><th>reason</th><td>{html.escape(profile_score.get("reason") or "")}</td></tr>
   </table>
 </section>
 '''
@@ -166,20 +167,20 @@ def render_report(
         frame_numbers = (metrics or {}).get("frame_numbers", [])
         return f'''
 <section>
-  <h2>{name}</h2>
+  <h2>{label}</h2>
   <table>
-    <tr><th>correctness</th><td>{codec_score["correctness_points"]}/10</td></tr>
-    <tr><th>fps</th><td>{codec_score["fps_points"]}/5</td></tr>
-    <tr><th>measured fps</th><td>{codec_score["measured_fps"]:.2f} (expected {codec_score["expected_fps"]})</td></tr>
-    <tr><th>watermark rate</th><td>{codec_score["watermark_recognition_rate"]:.3f}</td></tr>
-    <tr><th>color rate</th><td>{codec_score["color_check_rate"]:.3f}</td></tr>
-    <tr><th>mean SSIM</th><td>{codec_score["mean_ssim"]:.3f}</td></tr>
-    <tr><th>reason</th><td>{html.escape(codec_score.get("reason") or "")}</td></tr>
+    <tr><th>correctness</th><td>{profile_score["correctness_points"]}/5</td></tr>
+    <tr><th>fps</th><td>{profile_score["fps_points"]}/5</td></tr>
+    <tr><th>measured fps</th><td>{profile_score["measured_fps"]:.2f} (expected {profile_score["expected_fps"]})</td></tr>
+    <tr><th>watermark rate</th><td>{profile_score["watermark_recognition_rate"]:.3f}</td></tr>
+    <tr><th>color rate</th><td>{profile_score["color_check_rate"]:.3f}</td></tr>
+    <tr><th>mean SSIM</th><td>{profile_score["mean_ssim"]:.3f}</td></tr>
+    <tr><th>reason</th><td>{html.escape(profile_score.get("reason") or "")}</td></tr>
   </table>
-  {_frame_number_svg(frame_numbers, f"{name}: frame number over time")}
-  {_histogram_svg(ssim_scores, f"{name}: SSIM histogram")}
+  {_frame_number_svg(frame_numbers, f"{label}: frame number over time")}
+  {_histogram_svg(ssim_scores, f"{label}: SSIM histogram")}
   <h3>Suspicious screenshots</h3>
-  {_suspicious_thumbs(name.lower(), metrics or {}, run_dir)}
+  {_suspicious_thumbs(profile, metrics or {}, run_dir)}
 </section>
 '''
 
@@ -209,7 +210,7 @@ def render_report(
     <tr><th>window</th><td>{cpu.get("sample_window_ms", 0)} ms</td></tr>
     <tr><th>ncpu</th><td>{cpu.get("ncpu")}</td></tr>
     <tr><th>normalization</th><td><code>{html.escape(cpu.get("normalization") or "")}</code></td></tr>
-    <tr><th>measured on</th><td>{html.escape(cpu.get("measured_on_codec") or "")}</td></tr>
+    <tr><th>measured on profile</th><td>{html.escape(cpu.get("measured_on_profile") or "")}</td></tr>
   </table>
   <details><summary>thresholds_used</summary>
     <pre><code>{thresholds_json}</code></pre>
@@ -221,6 +222,35 @@ def render_report(
     toolchain_rows = "".join(
         f"<tr><th>{html.escape(k)}</th><td><code>{html.escape(str(v))}</code></td></tr>"
         for k, v in toolchain.items()
+    )
+
+    profile_labels = {"2k": "2K profile", "4k": "4K profile"}
+    summary_rows = []
+    artifact_links = []
+    for profile in sorted(PROFILES.keys()):
+        label = profile_labels.get(profile, f"{profile} profile")
+        subtotal = (score.get(profile) or {}).get("total", 0)
+        summary_rows.append(
+            f'<tr><th>{html.escape(label)} subtotal</th><td>{subtotal}/10</td></tr>'
+        )
+        artifact_links.extend([
+            f'<a href="{profile}_metrics.json">{profile}_metrics.json</a>',
+            f'<a href="{profile}_screenshots/">{profile}_screenshots/</a>',
+        ])
+    summary_rows.append(
+        f'<tr><th>CPU subtotal</th><td>{cpu.get("points", 0)}/10'
+        f"{' (gated)' if cpu.get('gated') else ''}</td></tr>"
+    )
+    summary_rows.append(
+        f'<tr><th>top-level reason</th><td>{html.escape(score.get("reason") or "")}</td></tr>'
+    )
+    summary_rows.append(
+        f'<tr><th>Chromium</th><td><code>{html.escape(score.get("chromium_version") or "")}</code></td></tr>'
+    )
+
+    profile_sections = "\n".join(
+        profile_block(profile, profile_labels.get(profile, f"{profile} profile"))
+        for profile in sorted(PROFILES.keys())
     )
 
     body = f'''<!DOCTYPE html>
@@ -245,30 +275,22 @@ code {{ background: #f5f5f7; padding: 1px 4px; border-radius: 3px; }}
 <div class="banner"><strong>Internal use only.</strong> This report is not exposed to contestants.</div>
 
 <h1>Evaluator report</h1>
-<p class="summary-big">{score.get("objective_total", 0)} / {score.get("max_score", 40)}</p>
+<p class="summary-big">{score.get("objective_total", 0)} / {score.get("max_score", 30)}</p>
 
 <section>
   <h2>Summary</h2>
   <table>
-    <tr><th>H.264 subtotal</th><td>{h264.get("total", 0)}/15</td></tr>
-    <tr><th>H.265 subtotal</th><td>{h265.get("total", 0)}/15</td></tr>
-    <tr><th>CPU subtotal</th><td>{cpu.get("points", 0)}/10{' (gated)' if cpu.get('gated') else ''}</td></tr>
-    <tr><th>top-level reason</th><td>{html.escape(score.get("reason") or "")}</td></tr>
-    <tr><th>Chromium</th><td><code>{html.escape(score.get("chromium_version") or "")}</code></td></tr>
+    {''.join(summary_rows)}
     {toolchain_rows}
   </table>
   <p>
     <a href="score.json">score.json</a> ·
-    <a href="h264_metrics.json">h264_metrics.json</a> ·
-    <a href="h265_metrics.json">h265_metrics.json</a> ·
-    <a href="evaluator.log">evaluator.log</a> ·
-    <a href="h264_screenshots/">h264_screenshots/</a> ·
-    <a href="h265_screenshots/">h265_screenshots/</a>
+    {' · '.join(artifact_links)} ·
+    <a href="evaluator.log">evaluator.log</a>
   </p>
 </section>
 
-{codec_block("H264", h264, h264_metrics)}
-{codec_block("H265", h265, h265_metrics)}
+{profile_sections}
 {cpu_section()}
 </body></html>
 '''

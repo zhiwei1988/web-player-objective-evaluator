@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Start (or restart) the source-built MediaMTX bound to :8554 with the project's
+# Start (or restart) the source-built MediaMTX bound to :554 (privileged port,
+# requires CAP_NET_BIND_SERVICE — set on the binary by scripts/build.sh) with the project's
 # config. Writes the PID to rtsp_server/mediamtx.pid for later cleanup. Idempotent:
 # if a previous instance is still alive and healthy, leaves it running.
 
@@ -21,11 +22,11 @@ BINARY="${ROOT_DIR}/third_party/install/bin/mediamtx"
 [[ -x "${BINARY}" ]] || die "mediamtx binary missing at ${BINARY} (run scripts/build.sh)"
 [[ -f "${CONFIG}" ]] || die "config missing at ${CONFIG}"
 
-# Reuse a running instance if its PID is alive and port :8554 is bound.
+# Reuse a running instance if its PID is alive and port :554 is bound.
 if [[ -f "${PID_FILE}" ]]; then
     pid="$(cat "${PID_FILE}")"
     if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
-        if ss -ltn 'sport = :8554' 2>/dev/null | grep -q ':8554'; then
+        if ss -ltn 'sport = :554' 2>/dev/null | grep -q ':554'; then
             log "mediamtx already running (pid ${pid})"
             exit 0
         fi
@@ -33,10 +34,10 @@ if [[ -f "${PID_FILE}" ]]; then
     rm -f "${PID_FILE}"
 fi
 
-# Anyone else on :8554 is stale; clear them so mediamtx can bind.
-if lsof -ti:8554 >/dev/null 2>&1; then
-    log "clearing stale process on :8554"
-    lsof -ti:8554 | xargs -r kill -9 || true
+# Anyone else on :554 is stale; clear them so mediamtx can bind.
+if lsof -ti:554 >/dev/null 2>&1; then
+    log "clearing stale process on :554"
+    lsof -ti:554 | xargs -r kill -9 || true
 fi
 
 log "launching mediamtx (config=${CONFIG})"

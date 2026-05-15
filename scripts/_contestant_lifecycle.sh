@@ -31,8 +31,8 @@ clx_precheck_ports() {
     # Args: ports to require free. Caller responsibility.
     # evaluator-local.sh checks only 8080 (MediaMTX is owned by evaluator.sh
     # via the idempotent start_rtsp.sh and may already be up from a prior
-    # deploy.sh). evaluator-host.sh checks 8080 and 8554 (the container will
-    # bind 8554 via --network host).
+    # deploy.sh). evaluator-host.sh checks 8080 and 554 (the container will
+    # bind 554 via --network host with CAP_NET_BIND_SERVICE).
     local ports=("$@")
     (( ${#ports[@]} > 0 )) || { printf 'clx_precheck_ports: at least one port required\n' >&2; exit 1; }
     local query="" p
@@ -80,7 +80,7 @@ clx_extract_submission() {
 
 clx_start_contestant() {
     export RTSP_SERVER_HOST=127.0.0.1
-    export RTSP_SERVER_PORT=8554
+    export RTSP_SERVER_PORT=554
     export FRONTEND_PORT=8080
     (cd "${STAGE_DIR}" && setsid ./start.sh) > "${RUN_DIR}/contestant.log" 2>&1 &
     CONTESTANT_PID=$!
@@ -91,7 +91,7 @@ clx_start_contestant() {
 clx_wait_frontend_ready() {
     local i
     for i in $(seq 1 60); do
-        if curl -fsS -o /dev/null --max-time 2 "http://127.0.0.1:8080/play?codec=h264&autoplay=1"; then
+        if curl -fsS -o /dev/null --max-time 2 "http://127.0.0.1:8080/play?profile=2k&autoplay=1"; then
             clx_log "frontend reachable after ${i}s"
             return 0
         fi
@@ -109,7 +109,7 @@ clx_cleanup_contestant() {
         sleep 1
         kill -9 -- "-${CONTESTANT_PID}" 2>/dev/null || true
     fi
-    fuser -k 8080/tcp 8554/tcp 2>/dev/null || true
+    fuser -k 8080/tcp 554/tcp 2>/dev/null || true
 }
 
 clx_emit_score_to_fd3() {

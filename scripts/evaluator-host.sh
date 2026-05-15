@@ -51,8 +51,9 @@ docker image inspect "${IMAGE_REF}" >/dev/null 2>&1 \
 docker info >/dev/null 2>&1 || clx_die "docker daemon unreachable"
 
 clx_acquire_lock
-# Container will bind 8554 (MediaMTX) and contestant frontend lives on 8080.
-clx_precheck_ports 8080 8554
+# Container will bind 554 (MediaMTX, requires NET_BIND_SERVICE) and contestant
+# frontend lives on 8080.
+clx_precheck_ports 8080 554
 clx_prepare_run_dir "${TEAM_ID}"
 
 exec 3>&1
@@ -60,6 +61,10 @@ exec > >(tee -a "${RUN_DIR}/evaluator-host.log" >&2) 2>&1
 
 DOCKER_USER_FLAG=()
 (( ! USE_ROOT )) && DOCKER_USER_FLAG=(--user "$(id -u):$(id -g)")
+# MediaMTX inside the container needs CAP_NET_BIND_SERVICE to bind :554.
+# Pass this regardless of --root so the same flag works for non-root and
+# root container runs.
+DOCKER_CAPS=(--cap-add=NET_BIND_SERVICE)
 
 cleanup() {
     local rc=$?
@@ -69,7 +74,7 @@ cleanup() {
     # If we set up a RUN_DIR but never produced a score.json, write a
     # failure score via a short docker run so callers always see one.
     if [[ -n "${RUN_DIR:-}" && -d "${RUN_DIR}" && ! -f "${RUN_DIR}/score.json" ]]; then
-        docker run --rm "${DOCKER_USER_FLAG[@]}" \
+        docker run --rm "${DOCKER_USER_FLAG[@]}" "${DOCKER_CAPS[@]}" \
             -v "${RUN_DIR}:/work/results/${RESULTS_SUBDIR}:rw" \
             --entrypoint /work/.venv/bin/python \
             "${IMAGE_REF}" \
@@ -90,7 +95,7 @@ clx_start_contestant
 
 if ! clx_wait_frontend_ready; then
     clx_log "contestant frontend never became ready — writing failure score via container"
-    docker run --rm "${DOCKER_USER_FLAG[@]}" \
+    docker run --rm "${DOCKER_USER_FLAG[@]}" "${DOCKER_CAPS[@]}" \
         -v "${RUN_DIR}:/work/results/${RESULTS_SUBDIR}:rw" \
         --entrypoint /work/.venv/bin/python \
         "${IMAGE_REF}" \
@@ -104,7 +109,7 @@ if ! clx_wait_frontend_ready; then
 fi
 
 clx_log "invoking evaluator container"
-docker run --rm --network host "${DOCKER_USER_FLAG[@]}" \
+docker run --rm --network host "${DOCKER_USER_FLAG[@]}" "${DOCKER_CAPS[@]}" \
     -v "${RUN_DIR}:/work/results/${RESULTS_SUBDIR}:rw" \
     "${IMAGE_REF}" \
     "${TEAM_ID}" "${RESULTS_SUBDIR}"

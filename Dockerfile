@@ -25,7 +25,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg \
         python3 \
-        unzip lsof procps jq \
+        unzip lsof procps jq libcap2-bin \
     && curl -fsSL https://dl-ssl.google.com/linux/linux_signing_key.pub \
          | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
     && echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main' \
@@ -40,6 +40,12 @@ COPY --from=builder /work/third_party/install /work/third_party/install
 # LD_LIBRARY_PATH alone is insufficient because gcc/ld are not present in
 # the runtime stage and find_library() falls back to ldconfig only.
 RUN echo /work/third_party/install/lib > /etc/ld.so.conf.d/evaluator.conf && ldconfig
+# Apply CAP_NET_BIND_SERVICE to mediamtx so the binary can bind :554. Note
+# that Docker can drop file capabilities across COPYs on some storage drivers,
+# so this is also belt-and-suspenders — runtime privilege is granted by
+# `docker run --cap-add=NET_BIND_SERVICE` (see scripts/evaluator-host.sh).
+RUN setcap cap_net_bind_service=+ep /work/third_party/install/bin/mediamtx \
+    && getcap /work/third_party/install/bin/mediamtx
 COPY --from=builder /work/.venv               /work/.venv
 COPY --from=builder /work/.playwright         /work/.playwright
 COPY --from=builder /work/streams             /work/streams

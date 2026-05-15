@@ -28,6 +28,7 @@ APT_PKGS=(
     unzip
     git
     ca-certificates
+    libcap2-bin
 )
 
 install_apt() {
