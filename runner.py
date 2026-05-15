@@ -233,9 +233,25 @@ def run_capture(
 
         sampler: _cpu_sampler.Sampler | None = None
         if codec == "h265" and contestant_pgid is not None:
+            # Pluck the Playwright driver PID so the sampler can also follow
+            # the Chrome subtree (where wasm / WebCodecs decode actually runs
+            # for client-side-decode contestant designs). The contestant's
+            # session tree alone would miss this work entirely.
+            #
+            # Playwright Python doesn't expose the driver process on the
+            # public surface; the private path has been stable across the
+            # 1.4x series. Fall back to None on AttributeError so an SDK
+            # bump can't break sampling silently — capture_meta records
+            # extra_root_pid=null in that case for audit.
+            driver_pid: int | None = None
+            try:
+                driver_pid = browser._impl_obj._connection._transport._proc.pid
+            except AttributeError:
+                pass
             sampler = _cpu_sampler.Sampler(
                 pgid=contestant_pgid,
                 hz=cpu_sample_hz if cpu_sample_hz else _cpu_sampler.DEFAULT_SAMPLE_HZ,
+                extra_root_pid=driver_pid,
             )
             sampler.start()
         result.capture_started_at_epoch = time.time()

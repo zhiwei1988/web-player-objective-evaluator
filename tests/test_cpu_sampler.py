@@ -110,3 +110,60 @@ def test_sampler_skips_when_no_processes_match():
     time.sleep(0.3)
     result = sampler.stop()
     assert result.mean_percent is None
+
+
+def test_sampler_counts_extra_root_pid_subtree():
+    """A spinner reached only via ppid descent (extra_root_pid) is counted.
+
+    Set pgid to a bogus value so the session-match path can't hit; the only
+    way the spinner gets counted is through extra_root_pid → ppid descent.
+    """
+    proc = subprocess.Popen(
+        [sys.executable, "-u", "-c",
+         "x=0\nwhile True:\n    x=(x+1)%1000000\n"]
+    )
+    try:
+        sampler = _cpu_sampler.Sampler(
+            pgid=2**30,                 # no session match
+            extra_root_pid=proc.pid,    # the spinner itself
+            hz=4.0,
+        )
+        sampler.start()
+        time.sleep(2.0)
+        result = sampler.stop()
+        ncpu = os.cpu_count() or 1
+        expected_pct = 100.0 / ncpu
+        assert result.extra_root_pid == proc.pid
+        assert result.mean_percent is not None
+        # Spinner pinned to one core; allow generous low-side slack for warmup.
+        assert result.mean_percent > expected_pct - 3.0, (
+            f"mean={result.mean_percent} expected≈{expected_pct}"
+        )
+    finally:
+        proc.kill()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def test_sampler_dedupes_pids_in_both_trees():
+    """A PID that satisfies BOTH the session match AND the ppid descent path
+    must be counted once (not double-counted)."""
+    # Our own PID. It matches our session AND it is itself the root of its
+    # own ppid subtree.
+    sampler = _cpu_sampler.Sampler(
+        pgid=os.getpgid(0),
+        extra_root_pid=os.getpid(),
+        hz=10.0,
+    )
+    sampler.start()
+    time.sleep(0.5)
+    result = sampler.stop()
+    # We can't assert the exact value (depends on host load), but it must be
+    # bounded — double counting could push 1-core spin to 2-core readings.
+    if result.mean_percent is not None:
+        ncpu = os.cpu_count() or 1
+        # Sanity ceiling: even a heavily loaded pytest worker shouldn't
+        # exceed 1/ncpu of all-cores-total during a 0.5s window.
+        assert result.mean_percent < 100.0 / ncpu * 1.5

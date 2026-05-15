@@ -55,10 +55,12 @@ def test_score_cpu_table(mean_cpu, expected_points):
 
 
 def test_score_cpu_gates_when_fps_below_threshold():
-    # 0.24 < 0.25 → gate trips, returns (0, "h265_fps_below_threshold")
+    # Force ratio=0.25 so the test expresses its intent independently of
+    # whatever CPU_GATE_H265_FPS_RATIO is currently configured to.
     points, reason = scorer.score_cpu(
         mean_cpu_percent=2.0,
         measured_h265_fps=fps_at(0.24),
+        gate_fps_ratio=0.25,
     )
     assert points == 0
     assert reason == "h265_fps_below_threshold"
@@ -75,9 +77,11 @@ def test_score_cpu_gates_when_sampler_missing():
 
 def test_score_cpu_gate_takes_precedence_over_value():
     # Even at 0% CPU, a failing fps round should not award CPU points.
+    # Pin ratio=0.25 so the test stays meaningful regardless of the configured default.
     points, reason = scorer.score_cpu(
         mean_cpu_percent=0.0,
         measured_h265_fps=fps_at(0.10),
+        gate_fps_ratio=0.25,
     )
     assert points == 0
     assert reason == "h265_fps_below_threshold"

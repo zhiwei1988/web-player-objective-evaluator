@@ -1,14 +1,31 @@
 """Contestant CPU usage sampler.
 
-Background thread that periodically enumerates /proc/[0-9]*/stat for all
-processes whose session ID (field 6 of stat) matches the contestant's PGID,
-accumulates (utime + stime) jiffies, and reports a mean CPU percentage
-normalized to the total of all cores (i.e., one core saturated == 100/ncpu %).
+Background thread that periodically enumerates /proc/[0-9]*/stat for processes
+in TWO trees and sums their (utime + stime) jiffies:
 
-Precondition: the contestant is launched via setsid (see
-scripts/_contestant_lifecycle.sh::clx_start_contestant), so SID == PGID ==
-the recorded CONTESTANT_PID. Without that, the field-6 match would not
-enumerate forked children.
+  1. Contestant session tree — every PID whose stat field-6 (session) matches
+     the contestant's PGID. Catches server-side workers the contestant forks
+     under its own setsid'ed session (relay backends, decode workers, etc.).
+
+  2. Browser process tree (optional `extra_root_pid`) — every PID reachable
+     from `extra_root_pid` via ppid descent. Catches the Playwright driver
+     + Chrome main + Chrome renderer/GPU/utility workers, where wasm /
+     WebCodecs decoding actually runs for client-side-decode contestant
+     designs (the dominant pattern: server fanout, browser decodes).
+
+The union is normalized to the total of all cores — one saturated core
+reads as 100/ncpu %.
+
+Precondition for tree 1: contestant is launched via setsid (see
+scripts/_contestant_lifecycle.sh::clx_start_contestant), so
+SID == PGID == the recorded CONTESTANT_PID.
+
+Precondition for tree 2: caller passes a PID whose subtree contains the
+work to attribute. For Playwright runs, the natural choice is
+`browser._impl_obj._connection._transport._proc.pid` (the driver process —
+parent of Chrome). The driver/Chrome subtree counts against the contestant
+as their effective rendering cost; this includes a small fixed overhead
+from Playwright's control-channel work that we accept as evaluator noise.
 
 Pure stdlib by design — no psutil, no pidstat — so the runtime requires no
 new pip dependency.
@@ -44,6 +61,7 @@ class SampleResult:
     clk_tck: int
     normalization: str
     pgid: int
+    extra_root_pid: int | None
     sample_hz_used: float
 
     def to_dict(self) -> dict:
@@ -55,13 +73,15 @@ class SampleResult:
             "clk_tck": self.clk_tck,
             "normalization": self.normalization,
             "pgid": self.pgid,
+            "extra_root_pid": self.extra_root_pid,
             "sample_hz_used": self.sample_hz_used,
         }
 
 
-def _read_stat(pid: int) -> tuple[int, int, int] | None:
-    """Return (session, utime, stime) jiffies for `pid`, or None on any read
-    error. We tolerate vanishing PIDs silently — they are expected mid-capture.
+def _read_stat(pid: int) -> tuple[int, int, int, int] | None:
+    """Return (session, ppid, utime, stime) jiffies for `pid`, or None on any
+    read error. We tolerate vanishing PIDs silently — they are expected
+    mid-capture.
 
     /proc/<pid>/stat fields (1-indexed, per `man 5 proc`):
         1=pid, 2=comm (in parens, may contain spaces),
@@ -76,27 +96,44 @@ def _read_stat(pid: int) -> tuple[int, int, int] | None:
     rparen = text.rfind(")")
     if lparen < 0 or rparen < 0:
         return None
-    # tail[0] is field 3 (state). Field 6 is tail[3]. utime is field 14 = tail[11],
-    # stime is field 15 = tail[12].
+    # tail[0] = field 3 (state). Indices after that:
+    #   field  4 (ppid)    = tail[1]
+    #   field  6 (session) = tail[3]
+    #   field 14 (utime)   = tail[11]
+    #   field 15 (stime)   = tail[12]
     tail = text[rparen + 2:].split()
     if len(tail) < 13:
         return None
     try:
+        ppid = int(tail[1])
         session = int(tail[3])
         utime = int(tail[11])
         stime = int(tail[12])
     except (IndexError, ValueError):
         return None
-    return session, utime, stime
+    return session, ppid, utime, stime
 
 
-def _enumerate_pgid_pids(pgid: int) -> dict[int, int]:
-    """Return {pid: utime+stime jiffies} for every PID whose session == pgid."""
-    out: dict[int, int] = {}
+def _enumerate_targets(pgid: int, extra_root_pid: int | None) -> dict[int, int]:
+    """Return {pid: utime+stime jiffies} for the union of two trees:
+
+      Tree 1 — Contestant session: every PID whose stat field-6 (session)
+               equals `pgid`. Catches anything the contestant fork'ed under
+               its own setsid'ed session.
+
+      Tree 2 — Browser process tree (optional): every PID reachable from
+               `extra_root_pid` via ppid descent. Catches the Playwright
+               driver + Chrome main + Chrome renderer/GPU/utility workers,
+               where wasm / WebCodecs decoding actually runs for
+               client-side-decode contestant designs.
+
+    PIDs in both trees are counted once. Vanished PIDs are silently dropped.
+    """
+    info: dict[int, tuple[int, int, int]] = {}  # pid -> (ppid, session, jiffies)
     try:
         entries = os.listdir("/proc")
     except FileNotFoundError:
-        return out
+        return {}
     for entry in entries:
         if not entry.isdigit():
             continue
@@ -104,10 +141,32 @@ def _enumerate_pgid_pids(pgid: int) -> dict[int, int]:
         stat = _read_stat(pid)
         if stat is None:
             continue
-        session, utime, stime = stat
+        session, ppid, utime, stime = stat
+        info[pid] = (ppid, session, utime + stime)
+
+    selected: dict[int, int] = {}
+
+    # Tree 1: session == pgid
+    for pid, (_, session, total) in info.items():
         if session == pgid:
-            out[pid] = utime + stime
-    return out
+            selected[pid] = total
+
+    # Tree 2: ppid descendants of extra_root_pid (inclusive)
+    if extra_root_pid is not None:
+        children: dict[int, list[int]] = {}
+        for pid, (ppid, _, _) in info.items():
+            children.setdefault(ppid, []).append(pid)
+        stack = [extra_root_pid]
+        while stack:
+            cur = stack.pop()
+            if cur in selected:
+                continue
+            cur_info = info.get(cur)
+            if cur_info is not None:
+                selected[cur] = cur_info[2]
+            stack.extend(children.get(cur, []))
+
+    return selected
 
 
 class Sampler:
@@ -120,10 +179,16 @@ class Sampler:
     to be called from a single owning thread (runner.py's capture body).
     """
 
-    def __init__(self, pgid: int, hz: float = DEFAULT_SAMPLE_HZ) -> None:
+    def __init__(
+        self,
+        pgid: int,
+        hz: float = DEFAULT_SAMPLE_HZ,
+        extra_root_pid: int | None = None,
+    ) -> None:
         if hz <= 0:
             raise ValueError(f"hz must be positive, got {hz}")
         self.pgid = pgid
+        self.extra_root_pid = extra_root_pid
         self.hz = hz
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -139,7 +204,7 @@ class Sampler:
         if self._thread is not None:
             raise RuntimeError("Sampler.start called twice")
         self._t_start = time.monotonic()
-        self._baseline = _enumerate_pgid_pids(self.pgid)
+        self._baseline = _enumerate_targets(self.pgid, self.extra_root_pid)
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
@@ -151,7 +216,7 @@ class Sampler:
             self._tick()
 
     def _tick(self) -> None:
-        now_pids = _enumerate_pgid_pids(self.pgid)
+        now_pids = _enumerate_targets(self.pgid, self.extra_root_pid)
         # Sum deltas for PIDs known last round. New PIDs become baselines (no
         # delta credited this round — prevents historical CPU being charged).
         # Vanished PIDs are simply dropped — their last contribution remains
@@ -190,5 +255,6 @@ class Sampler:
             clk_tck=self._clk_tck,
             normalization="all_cores_total",
             pgid=self.pgid,
+            extra_root_pid=self.extra_root_pid,
             sample_hz_used=self.hz,
         )
