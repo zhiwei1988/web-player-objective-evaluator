@@ -63,6 +63,9 @@ class SampleResult:
     pgid: int
     extra_root_pid: int | None
     sample_hz_used: float
+    exclude_chrome_gpu: bool
+    excluded_gpu_pids: list[int]
+    per_process_top: list[dict]  # diagnostic: top jiffies-burners
 
     def to_dict(self) -> dict:
         return {
@@ -75,6 +78,9 @@ class SampleResult:
             "pgid": self.pgid,
             "extra_root_pid": self.extra_root_pid,
             "sample_hz_used": self.sample_hz_used,
+            "exclude_chrome_gpu": self.exclude_chrome_gpu,
+            "excluded_gpu_pids": self.excluded_gpu_pids,
+            "per_process_top": self.per_process_top,
         }
 
 
@@ -112,6 +118,65 @@ def _read_stat(pid: int) -> tuple[int, int, int, int] | None:
     except (IndexError, ValueError):
         return None
     return session, ppid, utime, stime
+
+
+def _cmdline_is_chrome_gpu(cmdline: bytes) -> bool:
+    """Detect a Chrome GPU process from its /proc/<pid>/cmdline bytes.
+
+    Caveat: chrome subprocesses rewrite /proc/<pid>/cmdline into a SINGLE
+    space-separated string (argv elements are no longer NUL-separated after
+    prctl(PR_SET_MM_*) shenanigans), so a NUL-split-then-startswith approach
+    silently fails. Substring containment is the only reliable marker.
+    """
+    if not cmdline:
+        return False
+    return b"--gpu-preferences=" in cmdline or b"--type=gpu-process" in cmdline
+
+
+def _read_proc_diagnostic(pid: int) -> tuple[str, int, int, bool]:
+    """Return (label, ppid, threads, is_chrome_gpu) for a PID. Best-effort.
+
+    Chrome zeroes its argv hash early so --type=renderer / utility is mostly
+    NOT recoverable from /proc/<pid>/cmdline once the process settles. The
+    GPU process however carries --gpu-preferences=... long enough to be
+    detected on a fresh observation — that's enough to mark it and exclude
+    it from sampling (see Sampler `exclude_chrome_gpu`). On Linux headless
+    Chrome without a real GPU acceleration path, the GPU process runs
+    SwiftShader on the CPU and would otherwise dominate the union total,
+    not because contestant code is heavy but because software rasterisation
+    is.
+
+    label is `argv[0]` basename when cmdline is readable, otherwise `comm`.
+    ppid and threads come from /proc/<pid>/status.
+    """
+    label = "?"
+    ppid = 0
+    threads = 0
+    is_chrome_gpu = False
+    cmdline = b""
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+        if cmdline.strip(b"\x00"):
+            argv0 = cmdline.split(b"\x00", 1)[0]
+            label = argv0.decode("utf-8", "replace").rsplit("/", 1)[-1]
+    except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+        pass
+    is_chrome_gpu = _cmdline_is_chrome_gpu(cmdline)
+    if label in ("?", ""):
+        try:
+            label = Path(f"/proc/{pid}/comm").read_text().strip() or "?"
+        except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+            pass
+    try:
+        status = Path(f"/proc/{pid}/status").read_text()
+        for line in status.splitlines():
+            if line.startswith("PPid:"):
+                ppid = int(line.split()[1])
+            elif line.startswith("Threads:"):
+                threads = int(line.split()[1])
+    except (FileNotFoundError, PermissionError, ProcessLookupError, OSError, ValueError):
+        pass
+    return label, ppid, threads, is_chrome_gpu
 
 
 def _enumerate_targets(pgid: int, extra_root_pid: int | None) -> dict[int, int]:
@@ -184,12 +249,19 @@ class Sampler:
         pgid: int,
         hz: float = DEFAULT_SAMPLE_HZ,
         extra_root_pid: int | None = None,
+        exclude_chrome_gpu: bool = True,
     ) -> None:
         if hz <= 0:
             raise ValueError(f"hz must be positive, got {hz}")
         self.pgid = pgid
         self.extra_root_pid = extra_root_pid
         self.hz = hz
+        # Headless Chrome's GPU process runs SwiftShader software rasterisation
+        # when no real GPU pipeline is wired; on this evaluator's --ozone-platform=
+        # headless config it can dominate the union (84% in observed runs) without
+        # representing any contestant work. Filter it out by default; flip to False
+        # if you ever switch the runner to a real-GPU Chrome config.
+        self.exclude_chrome_gpu = exclude_chrome_gpu
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._ncpu = os.cpu_count() or 1
@@ -199,12 +271,35 @@ class Sampler:
         self._sample_count = 0
         self._baseline: dict[int, int] = {}
         self._total_delta_jiffies = 0
+        # Per-PID attribution for diagnostic dump. PID → cumulative δjiffies.
+        self._per_pid_delta: dict[int, int] = {}
+        # PID → (label, ppid, threads, is_chrome_gpu) at first observation.
+        self._pid_diag: dict[int, tuple[str, int, int, bool]] = {}
+        # PIDs identified as chrome GPU process; permanently excluded from
+        # baseline / deltas / per_pid_delta when exclude_chrome_gpu is True.
+        self._excluded_gpu_pids: set[int] = set()
 
     def start(self) -> None:
         if self._thread is not None:
             raise RuntimeError("Sampler.start called twice")
         self._t_start = time.monotonic()
-        self._baseline = _enumerate_targets(self.pgid, self.extra_root_pid)
+        raw_baseline = _enumerate_targets(self.pgid, self.extra_root_pid)
+        # Diagnose every baseline PID while it is alive (cmdline is most
+        # readable here; chrome subprocesses zero their argv soon after).
+        # Mid-run new PIDs get diagnosed on first observation in _tick. Re-
+        # read threads at stop time for top consumers since renderer thread
+        # counts can change as wasm workers spin up.
+        for pid in raw_baseline:
+            diag = _read_proc_diagnostic(pid)
+            self._pid_diag[pid] = diag
+            if self.exclude_chrome_gpu and diag[3]:  # is_chrome_gpu
+                self._excluded_gpu_pids.add(pid)
+        # Filtered baseline drops any chrome GPU process so deltas, total
+        # jiffies, and per_pid_delta never count its SwiftShader work.
+        self._baseline = {
+            pid: total for pid, total in raw_baseline.items()
+            if pid not in self._excluded_gpu_pids
+        }
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
@@ -216,7 +311,21 @@ class Sampler:
             self._tick()
 
     def _tick(self) -> None:
-        now_pids = _enumerate_targets(self.pgid, self.extra_root_pid)
+        raw_pids = _enumerate_targets(self.pgid, self.extra_root_pid)
+        # Diagnose new PIDs first so we can decide on exclusion before they
+        # contribute any delta. New chrome GPU processes (rare mid-run, but
+        # possible on a process crash + respawn) get filtered out from this
+        # tick on.
+        for pid in raw_pids:
+            if pid not in self._pid_diag:
+                diag = _read_proc_diagnostic(pid)
+                self._pid_diag[pid] = diag
+                if self.exclude_chrome_gpu and diag[3]:
+                    self._excluded_gpu_pids.add(pid)
+        now_pids = {
+            pid: total for pid, total in raw_pids.items()
+            if pid not in self._excluded_gpu_pids
+        }
         # Sum deltas for PIDs known last round. New PIDs become baselines (no
         # delta credited this round — prevents historical CPU being charged).
         # Vanished PIDs are simply dropped — their last contribution remains
@@ -229,6 +338,7 @@ class Sampler:
             delta = total - prev
             if delta > 0:
                 self._total_delta_jiffies += delta
+                self._per_pid_delta[pid] = self._per_pid_delta.get(pid, 0) + delta
         self._baseline = now_pids
         self._t_last = time.monotonic()
         self._sample_count += 1
@@ -247,6 +357,26 @@ class Sampler:
         else:
             denom = wall_s * self._ncpu * self._clk_tck
             mean = (self._total_delta_jiffies / denom) * 100.0 if denom > 0 else None
+        # Diagnostic: top jiffies-burners. Sorted desc, capped at 10. We
+        # re-read threads at stop time (vs first-observation time) for the
+        # top consumers — Chrome renderers spin up wasm workers mid-capture,
+        # and the late thread count is more informative.
+        top_pairs = sorted(
+            self._per_pid_delta.items(), key=lambda kv: kv[1], reverse=True
+        )[:10]
+        total = self._total_delta_jiffies or 1
+        per_process_top = []
+        for pid, jiffies in top_pairs:
+            label, ppid, threads_init, _ = self._pid_diag.get(pid, ("?", 0, 0, False))
+            _, _, threads_now, _ = _read_proc_diagnostic(pid)
+            per_process_top.append({
+                "pid": pid,
+                "label": label,
+                "ppid": ppid,
+                "threads": threads_now or threads_init,
+                "cpu_jiffies": jiffies,
+                "percent_of_union": round(jiffies / total * 100.0, 2),
+            })
         return SampleResult(
             mean_percent=mean,
             sample_count=self._sample_count,
@@ -257,4 +387,7 @@ class Sampler:
             pgid=self.pgid,
             extra_root_pid=self.extra_root_pid,
             sample_hz_used=self.hz,
+            exclude_chrome_gpu=self.exclude_chrome_gpu,
+            excluded_gpu_pids=sorted(self._excluded_gpu_pids),
+            per_process_top=per_process_top,
         )

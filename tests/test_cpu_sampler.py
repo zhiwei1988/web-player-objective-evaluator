@@ -147,6 +147,28 @@ def test_sampler_counts_extra_root_pid_subtree():
             pass
 
 
+def test_cmdline_is_chrome_gpu_handles_both_layouts():
+    """Real chrome subprocesses rewrite /proc/<pid>/cmdline into a single
+    space-separated string. The detector must match in both layouts."""
+    nul_separated = (
+        b"/path/to/chrome\x00--change-stack-guard-on-fork=enable\x00"
+        b"--gpu-preferences=UAAAAAAAAAAg\x00--enable-features=PlatformHEVCDecoderSupport\x00"
+    )
+    space_separated = (
+        b"playwright_chromiumdev_profile-XXX --change-stack-guard-on-fork=enable "
+        b"--gpu-preferences=UAAAAAAAAAAg --enable-features=PlatformHEVCDecoderSupport"
+    )
+    type_marker = b"chrome --type=gpu-process --some-flag"
+    not_gpu = b"node /path/to/playwright/driver"
+    empty = b""
+
+    assert _cpu_sampler._cmdline_is_chrome_gpu(nul_separated) is True
+    assert _cpu_sampler._cmdline_is_chrome_gpu(space_separated) is True
+    assert _cpu_sampler._cmdline_is_chrome_gpu(type_marker) is True
+    assert _cpu_sampler._cmdline_is_chrome_gpu(not_gpu) is False
+    assert _cpu_sampler._cmdline_is_chrome_gpu(empty) is False
+
+
 def test_sampler_dedupes_pids_in_both_trees():
     """A PID that satisfies BOTH the session match AND the ppid descent path
     must be counted once (not double-counted)."""
