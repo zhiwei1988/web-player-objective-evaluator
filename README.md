@@ -104,6 +104,24 @@ Per run, under `results/<team_id>_<timestamp>/`:
 - `report.html` (internal-only)
 - `evaluator.log`
 
+## Capture throughput benchmark
+
+To compare evaluator capture strategies without changing scoring, run a normal
+fixture evaluation and summarize the resulting artifacts:
+
+```bash
+scripts/capture_benchmark.py \
+  --screenshots results/<run>/2k_screenshots \
+  --metrics results/<run>/2k_metrics.json
+```
+
+The command reports shot count, actual capture duration, capture sampling FPS,
+average interval, p50/p90/p99 inter-shot intervals, and whether the companion
+metrics still meet full-correctness thresholds. To compare the optional CDP
+path, invoke `runner.py` with `--capture-strategy cdp` for a local benchmark
+run and summarize that screenshot directory the same way. FPS scoring continues
+to use `measured_fps`; benchmark output is audit/tuning data only.
+
 ## Layout
 
 ```

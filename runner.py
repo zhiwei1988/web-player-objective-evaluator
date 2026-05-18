@@ -16,7 +16,9 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import base64
 import json
+import os
 import sys
 import time
 from dataclasses import dataclass, field
@@ -33,6 +35,17 @@ from lib.profiles import PROFILES, FRONTEND_PORT
 
 READY_TIMEOUT_S = 15
 PLAYER_SELECTOR = '[data-testid="player-video"]'
+MIN_PLAYER_WIDTH = 1280
+MIN_PLAYER_HEIGHT = 720
+CAPTURE_VIEWPORT = {"width": MIN_PLAYER_WIDTH, "height": MIN_PLAYER_HEIGHT}
+DEFAULT_JPEG_QUALITY = 90
+CAPTURE_STRATEGY_PLAYWRIGHT = "playwright"
+CAPTURE_STRATEGY_CDP = "cdp"
+CAPTURE_STRATEGIES = (CAPTURE_STRATEGY_PLAYWRIGHT, CAPTURE_STRATEGY_CDP)
+
+
+class PlayerClipTooSmall(ValueError):
+    pass
 
 
 @dataclass
@@ -45,6 +58,11 @@ class CaptureResult:
     cpu_sample_result: dict | None = None
     capture_started_at_epoch: float | None = None
     capture_ended_at_epoch: float | None = None
+    target_fps: float | None = None
+    target_duration_s: float | None = None
+    capture_strategy: str = CAPTURE_STRATEGY_PLAYWRIGHT
+    jpeg_quality: int = DEFAULT_JPEG_QUALITY
+    clip: dict | None = None
 
 
 def run_capture(
@@ -54,10 +72,15 @@ def run_capture(
     fps: float,
     contestant_pgid: int | None = None,
     cpu_sample_hz: float | None = None,
+    capture_strategy: str | None = None,
 ) -> CaptureResult:
     output.mkdir(parents=True, exist_ok=True)
     spec = PROFILES[profile]
     result = CaptureResult(success=False)
+    result.target_fps = fps
+    result.target_duration_s = duration_s
+    result.capture_strategy = _resolve_capture_strategy(capture_strategy)
+    result.jpeg_quality = DEFAULT_JPEG_QUALITY
     url = f"http://localhost:{FRONTEND_PORT}/play?profile={profile}&autoplay=1"
 
     with sync_playwright() as p:
@@ -97,7 +120,7 @@ def run_capture(
                 return result
 
         result.chromium_version = browser.version
-        context = browser.new_context(viewport={"width": 1920, "height": 1080})
+        context = browser.new_context(viewport=CAPTURE_VIEWPORT)
         page = context.new_page()
 
         page.on("pageerror", lambda exc: result.browser_errors.append(f"pageerror: {exc}"))
@@ -225,6 +248,15 @@ def run_capture(
             "width": int(bbox["width"]),
             "height": int(bbox["height"]),
         }
+        try:
+            validate_player_clip(clip)
+        except PlayerClipTooSmall as exc:
+            result.reason = str(exc)
+            result.clip = clip
+            _write_timestamps(output, result)
+            browser.close()
+            return result
+        result.clip = clip
 
         # Capture loop. JPEG quality=90 is visually indistinguishable from PNG
         # for our watermarked test pattern but encodes ~3x faster, which is
@@ -274,8 +306,13 @@ def run_capture(
                     ts = time.time()
                     path = output / f"shot_{i:05d}.jpg"
                     try:
-                        page.screenshot(path=str(path), clip=clip,
-                                        type="jpeg", quality=90)
+                        _capture_screenshot(
+                            page=page,
+                            path=path,
+                            clip=clip,
+                            strategy=result.capture_strategy,
+                            jpeg_quality=result.jpeg_quality,
+                        )
                     except PlaywrightError as exc:
                         result.browser_errors.append(f"screenshot {i}: {exc}")
                         # Continue — analyzer will see the gap.
@@ -301,6 +338,70 @@ def run_capture(
     return result
 
 
+def _resolve_capture_strategy(value: str | None) -> str:
+    strategy = value or os.environ.get("EVALUATOR_CAPTURE_STRATEGY") or CAPTURE_STRATEGY_PLAYWRIGHT
+    if strategy not in CAPTURE_STRATEGIES:
+        raise ValueError(
+            f"unknown capture strategy {strategy!r}; expected one of {CAPTURE_STRATEGIES}"
+        )
+    return strategy
+
+
+def validate_player_clip(clip: dict) -> None:
+    width = int(clip.get("width") or 0)
+    height = int(clip.get("height") or 0)
+    if width < MIN_PLAYER_WIDTH or height < MIN_PLAYER_HEIGHT:
+        raise PlayerClipTooSmall(
+            "player-video below minimum size "
+            f"({width}x{height} < {MIN_PLAYER_WIDTH}x{MIN_PLAYER_HEIGHT})"
+        )
+
+
+def _capture_screenshot(
+    *,
+    page,
+    path: Path,
+    clip: dict,
+    strategy: str,
+    jpeg_quality: int,
+) -> None:
+    if strategy == CAPTURE_STRATEGY_PLAYWRIGHT:
+        page.screenshot(
+            path=str(path),
+            clip=clip,
+            type="jpeg",
+            quality=jpeg_quality,
+        )
+        return
+
+    if strategy == CAPTURE_STRATEGY_CDP:
+        session = page.context.new_cdp_session(page)
+        try:
+            res = session.send(
+                "Page.captureScreenshot",
+                {
+                    "format": "jpeg",
+                    "quality": jpeg_quality,
+                    "clip": {
+                        "x": float(clip["x"]),
+                        "y": float(clip["y"]),
+                        "width": float(clip["width"]),
+                        "height": float(clip["height"]),
+                        "scale": 1,
+                    },
+                    "fromSurface": True,
+                    "captureBeyondViewport": False,
+                    "optimizeForSpeed": True,
+                },
+            )
+            path.write_bytes(base64.b64decode(res["data"]))
+        finally:
+            session.detach()
+        return
+
+    raise ValueError(f"unknown capture strategy {strategy!r}")
+
+
 def _write_capture_meta(output: Path, profile: str, result: CaptureResult) -> None:
     """Write capture_meta.json next to the screenshots.
 
@@ -323,6 +424,11 @@ def _write_timestamps(output: Path, result: CaptureResult) -> None:
                 "success": result.success,
                 "reason": result.reason,
                 "timestamps": result.timestamps,
+                "target_fps": result.target_fps,
+                "target_duration_s": result.target_duration_s,
+                "capture_strategy": result.capture_strategy,
+                "jpeg_quality": result.jpeg_quality,
+                "clip": result.clip,
                 "browser_errors": result.browser_errors,
                 "chromium_version": result.chromium_version,
             },
@@ -343,12 +449,15 @@ def _cli() -> int:
                         "(currently 4k only), sample the PGID's CPU.")
     p.add_argument("--cpu-sample-hz", type=float, default=None,
                    help="Sampler tick rate (debug-only, will be retired once calibrated).")
+    p.add_argument("--capture-strategy", choices=CAPTURE_STRATEGIES, default=None,
+                   help="Screenshot strategy. Defaults to playwright; cdp is for throughput benchmarking.")
     args = p.parse_args()
 
     result = run_capture(
         args.profile, args.output, args.duration, args.fps,
         contestant_pgid=args.contestant_pgid,
         cpu_sample_hz=args.cpu_sample_hz,
+        capture_strategy=args.capture_strategy,
     )
     print(json.dumps({"success": result.success, "reason": result.reason}))
     if result.success:
@@ -358,6 +467,8 @@ def _cli() -> int:
     if "startup timeout" in result.reason:
         return 2
     if "missing data-testid" in result.reason:
+        return 3
+    if "player-video below minimum size" in result.reason:
         return 3
     if "navigation" in result.reason:
         return 4

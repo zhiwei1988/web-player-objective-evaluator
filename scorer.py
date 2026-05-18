@@ -19,11 +19,50 @@ from lib.profiles import PROFILES
 EXPECTED_FPS: dict[str, float] = {name: float(spec.fps) for name, spec in PROFILES.items()}
 
 
+# FPS scoring tunables. Per-profile so 2K (easier) can be held to a stricter
+# bar than 4K. See openspec/specs/evaluator/spec.md — Scoring requirement.
+FPS_FULL_RATIO_BY_PROFILE: dict[str, float] = {"2k": 0.85, "4k": 0.65}
+"""measured_fps / expected_fps at or above this → full 5 FPS points."""
+
+FPS_PARTIAL_RATIO_BY_PROFILE: dict[str, float] = {"2k": 0.50, "4k": 0.40}
+"""measured_fps / expected_fps at or above this (but below the full ratio)
+→ partial 3 FPS points. Below this → 0 FPS points."""
+
+
+def _validate_fps_thresholds() -> None:
+    """Enforce at import time: every profile has both thresholds and partial < full.
+
+    Using a raise (not assert) so this still fires under `python -O`. Adding a
+    new profile in lib/profiles.PROFILES MUST also add entries to both dicts —
+    no silent fallback ratio.
+    """
+    profiles = set(PROFILES)
+    missing_full = profiles - set(FPS_FULL_RATIO_BY_PROFILE)
+    missing_partial = profiles - set(FPS_PARTIAL_RATIO_BY_PROFILE)
+    if missing_full or missing_partial:
+        raise RuntimeError(
+            f"FPS scoring dicts incomplete: missing from FPS_FULL_RATIO_BY_PROFILE={sorted(missing_full)}, "
+            f"missing from FPS_PARTIAL_RATIO_BY_PROFILE={sorted(missing_partial)}"
+        )
+    for p in profiles:
+        full = FPS_FULL_RATIO_BY_PROFILE[p]
+        partial = FPS_PARTIAL_RATIO_BY_PROFILE[p]
+        if partial >= full:
+            raise RuntimeError(
+                f"FPS_PARTIAL_RATIO_BY_PROFILE[{p!r}]={partial} must be < FPS_FULL_RATIO_BY_PROFILE[{p!r}]={full}"
+            )
+
+
+_validate_fps_thresholds()
+
+
 # CPU sub-score tunables. Module-level so calibration is a one-line change.
 # Effective values applied to each run are echoed into score.json.cpu.thresholds_used.
-CPU_GATE_FPS_RATIO: float = 0.25
+CPU_GATE_FPS_RATIO: float = 0.65
 """measured_4k_fps / expected_4k_fps below this → CPU score gated to 0.
-Default mirrors score_fps's partial-credit threshold."""
+Aligned with FPS_FULL_RATIO_BY_PROFILE["4k"]: a submission that does not earn
+full 4K FPS credit cannot earn any CPU points. The two constants are independent
+and MAY drift apart deliberately in a future scoring-policy change."""
 
 CPU_FULL_THRESHOLD_PERCENT: float = 5.0
 """mean_cpu_percent at or below this → full 10 points."""
@@ -48,6 +87,8 @@ class ProfileScore:
     watermark_recognition_rate: float
     color_check_rate: float
     mean_ssim: float
+    fps_full_threshold_used: float
+    fps_partial_threshold_used: float
 
     @property
     def total(self) -> int:
@@ -63,6 +104,8 @@ class ProfileScore:
             "watermark_recognition_rate": self.watermark_recognition_rate,
             "color_check_rate": self.color_check_rate,
             "mean_ssim": self.mean_ssim,
+            "fps_full_threshold_used": self.fps_full_threshold_used,
+            "fps_partial_threshold_used": self.fps_partial_threshold_used,
         }
 
 
@@ -80,23 +123,25 @@ def score_correctness(rate_wm: float, rate_color: float, mean_ssim: float) -> in
     return 0
 
 
-def score_fps(measured: float, expected: float) -> int:
-    """Score the unique-frame FPS metric.
+def score_fps(measured: float, expected: float, profile: str) -> int:
+    """Score the unique-frame FPS metric, with per-profile thresholds.
 
-    Ratio-based scoring so the evaluator's capture-rate limits do not punish
-    contestants who are actually rendering. Anti-cheat signal (static + i-frame-only)
-    stays near zero.
+    The full-credit and partial-credit ratios are looked up from
+    FPS_FULL_RATIO_BY_PROFILE / FPS_PARTIAL_RATIO_BY_PROFILE — an unknown
+    profile raises KeyError (no silent fallback).
 
-    Full (5): measured ≥ 50% of expected.
-    Partial (3): measured ≥ 25% of expected.
-    Zero (0): below 25%.
+    Full (5): measured / expected ≥ FPS_FULL_RATIO_BY_PROFILE[profile].
+    Partial (3): measured / expected ≥ FPS_PARTIAL_RATIO_BY_PROFILE[profile].
+    Zero (0): below the partial ratio.
     """
     if expected <= 0:
         return 0
+    full_ratio = FPS_FULL_RATIO_BY_PROFILE[profile]
+    partial_ratio = FPS_PARTIAL_RATIO_BY_PROFILE[profile]
     ratio = measured / expected
-    if ratio >= 0.50:
+    if ratio >= full_ratio:
         return 5
-    if ratio >= 0.25:
+    if ratio >= partial_ratio:
         return 3
     return 0
 
@@ -216,12 +261,14 @@ def score_profile(profile: str, metrics: dict) -> ProfileScore:
     return ProfileScore(
         profile=profile,
         correctness_points=score_correctness(rate_wm, rate_color, mean_ssim),
-        fps_points=score_fps(measured_fps, expected_fps),
+        fps_points=score_fps(measured_fps, expected_fps, profile),
         measured_fps=measured_fps,
         expected_fps=expected_fps,
         watermark_recognition_rate=rate_wm,
         color_check_rate=rate_color,
         mean_ssim=mean_ssim,
+        fps_full_threshold_used=FPS_FULL_RATIO_BY_PROFILE[profile],
+        fps_partial_threshold_used=FPS_PARTIAL_RATIO_BY_PROFILE[profile],
     )
 
 

@@ -55,10 +55,43 @@ def test_score_cpu_table(mean_cpu, expected_points):
 
 
 def test_score_cpu_gates_when_fps_below_threshold():
+    # Intentionally pins gate_fps_ratio=0.25 to verify the gating mechanism at
+    # an arbitrary boundary, decoupled from the current module default.
     points, reason = scorer.score_cpu(
         mean_cpu_percent=2.0,
         measured_4k_fps=fps_at(0.24),
         gate_fps_ratio=0.25,
+    )
+    assert points == 0
+    assert reason == "4k_fps_below_threshold"
+
+
+def test_score_cpu_default_gate_trips_just_below_065():
+    # At the new module default (0.65), 0.64 ratio must gate.
+    points, reason = scorer.score_cpu(
+        mean_cpu_percent=2.0,
+        measured_4k_fps=fps_at(0.64),
+    )
+    assert points == 0
+    assert reason == "4k_fps_below_threshold"
+
+
+def test_score_cpu_default_gate_passes_just_above_065():
+    # 0.66 ratio passes the gate and the cpu scorer awards full marks at <=5% mean.
+    points, reason = scorer.score_cpu(
+        mean_cpu_percent=2.0,
+        measured_4k_fps=fps_at(0.66),
+    )
+    assert points == 10
+    assert reason is None
+
+
+def test_score_cpu_default_gate_trips_when_only_partial_fps_credit():
+    # 4K ratio 0.50 earns partial FPS credit (3 pts) but is still below the
+    # 0.65 CPU gate — CPU must be gated to 0 regardless of measured CPU.
+    points, reason = scorer.score_cpu(
+        mean_cpu_percent=0.0,
+        measured_4k_fps=fps_at(0.50),
     )
     assert points == 0
     assert reason == "4k_fps_below_threshold"

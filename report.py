@@ -138,6 +138,33 @@ def _suspicious_thumbs(profile: str, metrics: dict, run_dir: Path) -> str:
     return "".join(items)
 
 
+def _fmt_metric(value, suffix: str = "") -> str:
+    if isinstance(value, (int, float)):
+        return f"{value:.2f}{suffix}"
+    return "—"
+
+
+def _capture_diagnostics_table(metrics: dict | None) -> str:
+    metrics = metrics or {}
+    rows = [
+        ("capture sampling fps", _fmt_metric(metrics.get("capture_sampling_fps"))),
+        ("capture overrun", _fmt_metric(metrics.get("capture_span_overrun_ratio"), "x")),
+        ("repeat frame rate", _fmt_metric(metrics.get("repeat_frame_rate"))),
+        ("skipped frame rate", _fmt_metric(metrics.get("dropped_or_skipped_frame_rate"))),
+        ("frame progress fps", _fmt_metric(metrics.get("frame_progress_fps"))),
+    ]
+    body = "".join(
+        f"<tr><th>{html.escape(label)}</th><td>{html.escape(value)}</td></tr>"
+        for label, value in rows
+    )
+    return f'''
+  <h3>Capture diagnostics</h3>
+  <table>
+    {body}
+  </table>
+'''
+
+
 def render_report(
     *,
     score: dict,
@@ -165,18 +192,32 @@ def render_report(
 '''
         ssim_scores = (metrics or {}).get("ssim_scores", [])
         frame_numbers = (metrics or {}).get("frame_numbers", [])
+        expected_fps = profile_score["expected_fps"]
+        full_ratio = profile_score.get("fps_full_threshold_used")
+        partial_ratio = profile_score.get("fps_partial_threshold_used")
+        if isinstance(full_ratio, (int, float)) and isinstance(partial_ratio, (int, float)):
+            fps_band_row = (
+                f"<tr><th>fps band</th><td>"
+                f"full ≥ {full_ratio:.2f} ({expected_fps * full_ratio:.2f} fps), "
+                f"partial ≥ {partial_ratio:.2f} ({expected_fps * partial_ratio:.2f} fps)"
+                f"</td></tr>"
+            )
+        else:
+            fps_band_row = ""
         return f'''
 <section>
   <h2>{label}</h2>
   <table>
     <tr><th>correctness</th><td>{profile_score["correctness_points"]}/5</td></tr>
     <tr><th>fps</th><td>{profile_score["fps_points"]}/5</td></tr>
-    <tr><th>measured fps</th><td>{profile_score["measured_fps"]:.2f} (expected {profile_score["expected_fps"]})</td></tr>
+    <tr><th>measured fps</th><td>{profile_score["measured_fps"]:.2f} (expected {expected_fps})</td></tr>
+    {fps_band_row}
     <tr><th>watermark rate</th><td>{profile_score["watermark_recognition_rate"]:.3f}</td></tr>
     <tr><th>color rate</th><td>{profile_score["color_check_rate"]:.3f}</td></tr>
     <tr><th>mean SSIM</th><td>{profile_score["mean_ssim"]:.3f}</td></tr>
     <tr><th>reason</th><td>{html.escape(profile_score.get("reason") or "")}</td></tr>
   </table>
+  {_capture_diagnostics_table(metrics or {})}
   {_frame_number_svg(frame_numbers, f"{label}: frame number over time")}
   {_histogram_svg(ssim_scores, f"{label}: SSIM histogram")}
   <h3>Suspicious screenshots</h3>
@@ -200,9 +241,23 @@ def render_report(
             f'<span class="{gate_class}">gated: {html.escape(gate_reason)}</span>'
             if gated else '<span class="ok">scored</span>'
         )
+        # When the gate trips on 4K FPS, surface the exact ratio + fps cutoff
+        # so the contestant understands what 4K throughput would have unlocked CPU.
+        gate_callout = ""
+        if gated and gate_reason == "4k_fps_below_threshold":
+            gate_ratio = thresholds.get("gate_fps_ratio")
+            if isinstance(gate_ratio, (int, float)):
+                expected_4k = float(PROFILES["4k"].fps) if "4k" in PROFILES else None
+                cutoff_fps = expected_4k * gate_ratio if expected_4k else None
+                cutoff_str = f" ({cutoff_fps:.2f} fps against expected {expected_4k:g})" if cutoff_fps else ""
+                gate_callout = (
+                    f'<p class="fail"><strong>CPU gate:</strong> requires '
+                    f'4K measured_fps / expected_fps ≥ {gate_ratio:.2f}{cutoff_str}.</p>'
+                )
         return f'''
 <section>
   <h2>CPU sub-score: {cpu.get("points", 0)}/10</h2>
+  {gate_callout}
   <table>
     <tr><th>state</th><td>{gated_label}</td></tr>
     <tr><th>mean CPU</th><td>{mean_str}</td></tr>

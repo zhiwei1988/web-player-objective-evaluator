@@ -63,6 +63,14 @@ class CodecMetrics:
     color_check_rate: float = 0.0
     mean_ssim: float = 0.0
     per_shot: list[dict] = field(default_factory=list)
+    capture_sampling_fps: float = 0.0
+    target_capture_fps: float = 0.0
+    target_capture_duration: float = 0.0
+    capture_span_overrun_ratio: float = 0.0
+    frame_delta_histogram: dict[str, int] = field(default_factory=dict)
+    repeat_frame_rate: float = 0.0
+    dropped_or_skipped_frame_rate: float = 0.0
+    frame_progress_fps: float = 0.0
 
 
 # ---- Frame-number recognition ------------------------------------------------
@@ -197,6 +205,82 @@ def compute_ssim(shot: Image.Image, reference: Image.Image) -> float:
 
 # ---- Main pipeline -----------------------------------------------------------
 
+def _read_timestamps(screenshots_dir: Path) -> dict:
+    ts_file = screenshots_dir / "timestamps.json"
+    if not ts_file.exists():
+        return {}
+    try:
+        return json.loads(ts_file.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _profile_frame_count(profile: str) -> int:
+    spec = PROFILES[profile]
+    return int(round(spec.fps * spec.duration_s))
+
+
+def _frame_delta(profile: str, prev: int, cur: int) -> int:
+    raw = cur - prev
+    if raw >= 0:
+        return raw
+    total = _profile_frame_count(profile)
+    # Reference streams loop every profile duration. A negative transition
+    # from the tail to the head is normal progress across that boundary.
+    if total > 0 and prev >= int(total * 0.8) and cur <= int(total * 0.2):
+        return (total - prev) + cur
+    return raw
+
+
+def apply_capture_diagnostics(
+    profile: str,
+    screenshots_dir: Path,
+    metrics: CodecMetrics,
+    ts_data: dict | None = None,
+) -> None:
+    ts_data = ts_data if ts_data is not None else _read_timestamps(screenshots_dir)
+    ts_list = ts_data.get("timestamps") or []
+    if len(ts_list) >= 2:
+        metrics.duration = float(ts_list[-1] - ts_list[0])
+
+    spec = PROFILES[profile]
+    metrics.target_capture_fps = float(ts_data.get("target_fps") or spec.fps)
+    metrics.target_capture_duration = float(
+        ts_data.get("target_duration_s") or spec.duration_s
+    )
+    if metrics.duration > 0:
+        metrics.capture_sampling_fps = metrics.total_shots / metrics.duration
+        if metrics.target_capture_duration > 0:
+            metrics.capture_span_overrun_ratio = (
+                metrics.duration / metrics.target_capture_duration
+            )
+
+    recognized = [fn for fn in metrics.frame_numbers if fn is not None]
+    if len(recognized) < 2:
+        return
+
+    histogram: dict[str, int] = {}
+    repeats = 0
+    skips = 0
+    progress = 0
+    for prev, cur in zip(recognized, recognized[1:]):
+        delta = _frame_delta(profile, prev, cur)
+        key = str(delta)
+        histogram[key] = histogram.get(key, 0) + 1
+        if delta == 0:
+            repeats += 1
+        elif delta > 1:
+            skips += 1
+        if delta > 0:
+            progress += delta
+
+    total_deltas = len(recognized) - 1
+    metrics.frame_delta_histogram = histogram
+    metrics.repeat_frame_rate = repeats / total_deltas
+    metrics.dropped_or_skipped_frame_rate = skips / total_deltas
+    if metrics.duration > 0:
+        metrics.frame_progress_fps = progress / metrics.duration
+
 def analyze(profile: str, screenshots_dir: Path, reference_dir: Path) -> CodecMetrics:
     metrics = CodecMetrics()
     shots = sorted([
@@ -207,12 +291,10 @@ def analyze(profile: str, screenshots_dir: Path, reference_dir: Path) -> CodecMe
 
     # Load duration from runner.py's timestamps.json so unique-frame FPS is
     # divided by the actual capture span, not the wall clock of analysis.
-    ts_file = screenshots_dir / "timestamps.json"
-    if ts_file.exists():
-        ts_data = json.loads(ts_file.read_text())
-        ts_list = ts_data.get("timestamps") or []
-        if len(ts_list) >= 2:
-            metrics.duration = float(ts_list[-1] - ts_list[0])
+    ts_data = _read_timestamps(screenshots_dir)
+    ts_list = ts_data.get("timestamps") or []
+    if len(ts_list) >= 2:
+        metrics.duration = float(ts_list[-1] - ts_list[0])
 
     for shot_path in shots:
         try:
@@ -265,6 +347,7 @@ def analyze(profile: str, screenshots_dir: Path, reference_dir: Path) -> CodecMe
     metrics.unique_frame_count = len(unique)
     if metrics.duration > 0:
         metrics.measured_fps = metrics.unique_frame_count / metrics.duration
+    apply_capture_diagnostics(profile, screenshots_dir, metrics, ts_data)
 
     return metrics
 
@@ -283,6 +366,14 @@ def metrics_to_dict(m: CodecMetrics) -> dict:
         "color_check_rate": m.color_check_rate,
         "mean_ssim": m.mean_ssim,
         "per_shot": m.per_shot,
+        "capture_sampling_fps": m.capture_sampling_fps,
+        "target_capture_fps": m.target_capture_fps,
+        "target_capture_duration": m.target_capture_duration,
+        "capture_span_overrun_ratio": m.capture_span_overrun_ratio,
+        "frame_delta_histogram": m.frame_delta_histogram,
+        "repeat_frame_rate": m.repeat_frame_rate,
+        "dropped_or_skipped_frame_rate": m.dropped_or_skipped_frame_rate,
+        "frame_progress_fps": m.frame_progress_fps,
     }
 
 
