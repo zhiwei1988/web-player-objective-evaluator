@@ -70,4 +70,6 @@ if ! clx_wait_frontend_ready; then
     exit 2
 fi
 
-"${SCRIPT_DIR}/evaluator.sh" "${TEAM_ID}" "${RESULTS_SUBDIR}"
+# Wrapper owns score-JSON emission via clx_emit_score_to_fd3; tell the inner
+# script to skip its own emission so callers don't see two copies.
+EVALUATOR_SKIP_STDOUT_EMIT=1 "${SCRIPT_DIR}/evaluator.sh" "${TEAM_ID}" "${RESULTS_SUBDIR}"

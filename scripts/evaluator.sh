@@ -107,8 +107,11 @@ cleanup() {
         write_failure_score "${FAILURE_REASON:-evaluator aborted}"
     fi
     # Emit final score JSON to the *original* stdout (fd 3), so callers piping
-    # `evaluator.sh` get just the JSON line.
-    if [[ -f "${SCORE_FILE}" ]]; then
+    # `evaluator.sh` get just the JSON line. Wrappers (evaluator-local.sh /
+    # evaluator-host.sh) set EVALUATOR_SKIP_STDOUT_EMIT=1 because they own
+    # emission themselves; without this gate, both layers would print the JSON
+    # and the user would see two copies glued together.
+    if [[ "${EVALUATOR_SKIP_STDOUT_EMIT:-0}" != "1" && -f "${SCORE_FILE}" ]]; then
         cat "${SCORE_FILE}" >&3 || true
     fi
     exit "${rc}"

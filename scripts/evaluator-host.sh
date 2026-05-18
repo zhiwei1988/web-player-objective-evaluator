@@ -109,7 +109,10 @@ if ! clx_wait_frontend_ready; then
 fi
 
 clx_log "invoking evaluator container"
+# Wrapper owns score-JSON emission via clx_emit_score_to_fd3; tell the inner
+# script to skip its own emission so callers don't see two copies.
 docker run --rm --network host "${DOCKER_USER_FLAG[@]}" "${DOCKER_CAPS[@]}" \
+    -e EVALUATOR_SKIP_STDOUT_EMIT=1 \
     -v "${RUN_DIR}:/work/results/${RESULTS_SUBDIR}:rw" \
     "${IMAGE_REF}" \
     "${TEAM_ID}" "${RESULTS_SUBDIR}"
