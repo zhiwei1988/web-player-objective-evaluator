@@ -28,7 +28,7 @@ The evaluator does **not** depend on `apt`-installed copies of `ffmpeg`, `mediam
 | `scripts/setup.sh`        | apt toolchain (incl. `libcap2-bin`), Python venv, `git submodule update --init --recursive` | Once per host                              |
 | `scripts/build.sh`        | Build every submodule into `third_party/install/`, install Python deps, Chromium, apply `setcap cap_net_bind_service=+ep` to mediamtx (requires sudo) | Once per host, or `--clean` to force a full rebuild     |
 | `scripts/deploy.sh`       | Regenerate streams if stale. Does NOT start MediaMTX (that's per-run, owned by `evaluator.sh`) | Once per host after `build.sh`, or whenever `lib/watermark.py` changes |
-| `scripts/evaluator.sh`    | Per-submission run: clean ports, deploy contestant, capture, score, cleanup  | Once per contestant                                        |
+| `scripts/evaluator.sh`    | Per-submission run: acquire lock, stage zip, run contestant, capture, score, cleanup | Once per contestant                              |
 | `scripts/test.sh`         | Run the bundled self-test suite (auto-runs `deploy.sh` and `teardown.sh`)    | After any change to the evaluator itself                   |
 | `scripts/teardown.sh`     | Stop MediaMTX and free ports `554`/`8080`                                    | After an evaluation session, or before bringing the host to idle |
 

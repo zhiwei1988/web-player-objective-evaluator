@@ -1,76 +1,62 @@
 #!/usr/bin/env bash
-# Evaluator main body — runs MediaMTX + capture + scoring inside a prepared
-# host environment. Host-side concerns (zip extract, contestant start.sh /
-# stop.sh, port precheck) belong to scripts/evaluator-host.sh (target host)
-# or scripts/evaluator-local.sh (build host shortcut). MediaMTX is brought
-# up AND torn down by this script per run; it is no longer shared with a
-# host-resident daemon.
+# Single operator-facing evaluator entry. It owns the host-side contestant
+# lifecycle, MediaMTX lifecycle, capture, analysis, scoring, cleanup, and final
+# score.json emission for one submission zip.
 #
 # Per-profile parameters (resolution, fps, reference dir, CPU sampling) come
 # from lib/profiles.py::PROFILES; this script iterates that registry rather
 # than hard-coding profile names.
 
 set -uo pipefail
-# NB: not `set -e` — we want explicit failure handling per step so the score JSON
-# always gets written.
+# NB: not `set -e` — explicit failure handling keeps cleanup and score emission
+# predictable on every path that can produce a run directory.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 usage() {
     cat >&2 <<'EOF'
-Usage: scripts/evaluator.sh <team_id> <results_subdir>
+Usage: scripts/evaluator.sh <team_id> <submission_zip>
 
-Invoked by scripts/evaluator-host.sh or scripts/evaluator-local.sh after
-the contestant frontend is already serving on http://127.0.0.1:8080.
-Reads streams/ and reference/ from the workspace; writes capture artifacts
-+ score.json + report.html under results/<results_subdir>/.
+Evaluates one contestant submission zip on this host. Writes artifacts under
+results/<team_id>_<timestamp>/ and prints the final score.json to stdout.
 EOF
-    exit 64
+    exit "${1:-64}"
 }
 
-(( $# >= 2 )) || usage
-TEAM_ID="$1"
-RESULTS_SUBDIR="$2"
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    usage 0
+fi
+(( $# == 2 )) || usage 64
 
-# Pre-flight: source-built binaries must be present.
-for bin in ffmpeg mediamtx tesseract; do
-    if [[ ! -x "${ROOT_DIR}/third_party/install/bin/${bin}" ]]; then
-        printf 'evaluator: %s missing under third_party/install/bin — run scripts/build.sh\n' "${bin}" >&2
-        exit 66
-    fi
-done
+TEAM_ID="$1"
+SUBMISSION_ZIP="$(readlink -f "$2" 2>/dev/null || echo "$2")"
 
 # shellcheck source=env.sh
 source "${SCRIPT_DIR}/env.sh"
+# shellcheck source=_contestant_lifecycle.sh
+source "${SCRIPT_DIR}/_contestant_lifecycle.sh"
 
-RUN_DIR="${ROOT_DIR}/results/${RESULTS_SUBDIR}"
-[[ -d "${RUN_DIR}" ]] || { printf 'evaluator: results dir does not exist: %s\n' "${RUN_DIR}" >&2; exit 65; }
+RUN_DIR=""
+LOG_FILE=""
+SCORE_FILE=""
+REPORT_FILE=""
+FAILURE_REASON=""
+PROFILES_TO_RUN=()
+declare -A PROFILE_REASON=()
+declare -A METRICS_PATH=()
 
-LOG_FILE="${RUN_DIR}/evaluator.log"
-SCORE_FILE="${RUN_DIR}/score.json"
-REPORT_FILE="${RUN_DIR}/report.html"
-
-# Tee all log lines to the run log, but keep stdout for the final score JSON.
+# fd-3 holds the original stdout for the final score JSON once logging is
+# redirected to the run log.
 exec 3>&1
-exec > >(tee -a "${LOG_FILE}" >&2) 2>&1
 
 log()  { printf '[evaluator] %s\n' "$*"; }
 die()  { printf 'evaluator failed: %s\n' "$*"; }
 
-# Read profile names from the single truth source.
-mapfile -t PROFILES_TO_RUN < <(.venv/bin/python -c \
-    "from lib.profiles import PROFILES; print('\n'.join(sorted(PROFILES.keys())))")
-(( ${#PROFILES_TO_RUN[@]} > 0 )) || { die "no profiles defined in lib.profiles.PROFILES"; exit 71; }
-
-# Per-profile state populated by the capture loop.
-declare -A PROFILE_REASON=()
-declare -A METRICS_PATH
-
-FAILURE_REASON=""
-
 write_failure_score() {
+    [[ -n "${SCORE_FILE}" ]] || return 0
     local reason="$1"
+    [[ -n "${reason}" ]] || reason="contestant_frontend_unavailable"
     log "writing failure score (${reason})"
     local args=(--output "${SCORE_FILE}"
                 --report "${REPORT_FILE}"
@@ -101,24 +87,55 @@ stop_mediamtx() {
 
 cleanup() {
     local rc=$?
+    trap - EXIT INT TERM
+    clx_cleanup_contestant
     stop_mediamtx
-    # If no score file exists, this run died before scoring — write a failure.
-    if [[ ! -f "${SCORE_FILE}" ]]; then
-        write_failure_score "${FAILURE_REASON:-evaluator aborted}"
+    if [[ -n "${RUN_DIR:-}" && -d "${RUN_DIR}" && ! -f "${SCORE_FILE}" ]]; then
+        write_failure_score "${FAILURE_REASON:-${HOST_FAILURE_REASON:-contestant_frontend_unavailable}}"
     fi
-    # Emit final score JSON to the *original* stdout (fd 3), so callers piping
-    # `evaluator.sh` get just the JSON line. Wrappers (evaluator-local.sh /
-    # evaluator-host.sh) set EVALUATOR_SKIP_STDOUT_EMIT=1 because they own
-    # emission themselves; without this gate, both layers would print the JSON
-    # and the user would see two copies glued together.
-    if [[ "${EVALUATOR_SKIP_STDOUT_EMIT:-0}" != "1" && -f "${SCORE_FILE}" ]]; then
+    if [[ -n "${SCORE_FILE:-}" && -f "${SCORE_FILE}" ]]; then
         cat "${SCORE_FILE}" >&3 || true
     fi
     exit "${rc}"
 }
+
+clx_acquire_lock
+clx_prepare_run_dir "${TEAM_ID}"
+
+LOG_FILE="${RUN_DIR}/evaluator.log"
+SCORE_FILE="${RUN_DIR}/score.json"
+REPORT_FILE="${RUN_DIR}/report.html"
+
+# Tee logs to the run log, but preserve stdout for the final score JSON.
+exec > >(tee -a "${LOG_FILE}" >&2) 2>&1
 trap cleanup EXIT INT TERM
 
-log "starting run team_id=${TEAM_ID} run_dir=${RUN_DIR}"
+log "starting run team_id=${TEAM_ID} submission=${SUBMISSION_ZIP} run_dir=${RUN_DIR}"
+
+# Pre-flight: source-built binaries must be present.
+for bin in ffmpeg mediamtx tesseract; do
+    if [[ ! -x "${ROOT_DIR}/third_party/install/bin/${bin}" ]]; then
+        die "${bin} missing under third_party/install/bin; run scripts/build.sh"
+        exit 1
+    fi
+done
+
+clx_precheck_ports 8080
+clx_extract_submission "${SUBMISSION_ZIP}"
+clx_start_contestant
+
+if ! clx_wait_frontend_ready; then
+    FAILURE_REASON="contestant_frontend_unavailable"
+    log "contestant frontend never became ready"
+    write_failure_score "${FAILURE_REASON}"
+    exit 2
+fi
+
+# Read profile names from the single truth source.
+mapfile -t PROFILES_TO_RUN < <("${ROOT_DIR}/.venv/bin/python" -c \
+    "from lib.profiles import PROFILES; print('\n'.join(sorted(PROFILES.keys())))")
+(( ${#PROFILES_TO_RUN[@]} > 0 )) || { die "no profiles defined in lib.profiles.PROFILES"; exit 1; }
+
 log "chromium=$(tr '\n' ' ' < "${ROOT_DIR}/third_party/install/playwright_chromium.version" 2>/dev/null)"
 log "profiles=${PROFILES_TO_RUN[*]}"
 
@@ -127,26 +144,24 @@ log "starting RTSP server"
 if ! "${SCRIPT_DIR}/start_rtsp.sh"; then
     FAILURE_REASON="rtsp infrastructure failure"
     log "${FAILURE_REASON}"
-    exit 70
+    exit 1
 fi
 for profile in "${PROFILES_TO_RUN[@]}"; do
     if ! "${SCRIPT_DIR}/health_check.sh" "${profile}" 15; then
         FAILURE_REASON="rtsp infrastructure failure (${profile} unreadable)"
         log "${FAILURE_REASON}"
-        exit 70
+        exit 1
     fi
 done
 
-# Captures. A single profile's failure does not abort the other profile.
 run_capture() {
     local profile="$1" out="$2"
     log "running runner.py --profile ${profile}"
 
     # CPU sampling is opt-in per profile via PROFILES[profile].cpu_sampled.
-    # PGID comes from the wrapper's clx_start_contestant (setsid → SID==PGID).
     local extra_args=()
     local cpu_sampled
-    cpu_sampled="$(.venv/bin/python -c \
+    cpu_sampled="$("${ROOT_DIR}/.venv/bin/python" -c \
         "from lib.profiles import PROFILES; print('1' if PROFILES['${profile}'].cpu_sampled else '0')")"
     if [[ "${cpu_sampled}" == "1" && -f "${RUN_DIR}/contestant.pid" ]]; then
         local pgid
@@ -156,10 +171,9 @@ run_capture() {
         fi
     fi
 
-    # Per-profile fps from the registry — keep evaluator's capture cadence
-    # tied to the source mp4's framerate.
+    # Per-profile fps from the registry keeps capture cadence tied to source fps.
     local profile_fps
-    profile_fps="$(.venv/bin/python -c \
+    profile_fps="$("${ROOT_DIR}/.venv/bin/python" -c \
         "from lib.profiles import PROFILES; print(PROFILES['${profile}'].fps)")"
 
     if "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/runner.py" \
@@ -168,9 +182,8 @@ run_capture() {
             "${extra_args[@]}"; then
         return 0
     fi
-    # runner.py wrote timestamps.json with the reason; surface it.
     local reason
-    reason="$(python3 -c "import json,sys;print(json.load(open('${out}/timestamps.json')).get('reason') or '')" 2>/dev/null || true)"
+    reason="$(python3 -c "import json; print(json.load(open('${out}/timestamps.json')).get('reason') or '')" 2>/dev/null || true)"
     log "  ${profile} runner failed: ${reason}"
     PROFILE_REASON[${profile}]="${reason}"
     return 1
@@ -179,9 +192,9 @@ run_capture() {
 analyze_profile() {
     local profile="$1" shots="$2" metrics="$3"
     local refdir
-    refdir="$(.venv/bin/python -c "from lib.profiles import PROFILES; print(PROFILES['${profile}'].reference_dir)")"
+    refdir="$("${ROOT_DIR}/.venv/bin/python" -c "from lib.profiles import PROFILES; print(PROFILES['${profile}'].reference_dir)")"
     if ! compgen -G "${shots}/shot_*.png" >/dev/null && ! compgen -G "${shots}/shot_*.jpg" >/dev/null; then
-        log "no ${profile} screenshots — skipping analyzer"
+        log "no ${profile} screenshots; skipping analyzer"
         return 1
     fi
     "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/analyzer.py" \
@@ -214,4 +227,4 @@ done
 log "score written to ${SCORE_FILE}"
 log "report written to ${REPORT_FILE}"
 
-# Trap will tee score.json to original stdout on exit.
+# Trap emits score.json to original stdout on exit.

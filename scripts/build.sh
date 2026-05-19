@@ -240,9 +240,7 @@ build_mediamtx() {
 
 # MediaMTX listens on :554, a privileged port (<1024). Granting
 # CAP_NET_BIND_SERVICE on the binary lets it bind that port without running
-# as root. The container path achieves the same via --cap-add=NET_BIND_SERVICE
-# in scripts/evaluator-host.sh; this step covers the host-native path
-# (scripts/evaluator-local.sh + scripts/deploy.sh).
+# as root.
 apply_mediamtx_cap() {
     local bin="${INSTALL_PREFIX}/bin/mediamtx"
     command -v setcap >/dev/null \
@@ -268,7 +266,7 @@ apply_mediamtx_cap() {
 # secure-exec mode and the kernel strips LD_LIBRARY_PATH on exec; any ffmpeg
 # subprocess it spawns then fails to load libx264/libx265/libdmtx from the
 # source-built prefix. Registration via /etc/ld.so.conf.d/ makes the linker
-# find them without env vars. Mirrors the Dockerfile's runtime-stage step.
+# find them without env vars.
 apply_ldconfig() {
     local conf=/etc/ld.so.conf.d/evaluator.conf
     local libdir="${INSTALL_PREFIX}/lib"

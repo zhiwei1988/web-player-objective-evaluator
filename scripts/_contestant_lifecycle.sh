@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
-# Functions sourced by scripts/evaluator-host.sh and scripts/evaluator-local.sh
-# to manage contestant lifecycle on the host (lock, port precheck, unzip,
-# start.sh / stop.sh, cleanup). Source this file with ROOT_DIR already set.
+# Functions sourced by scripts/evaluator.sh to manage contestant lifecycle on
+# the host (lock, port precheck, unzip, start.sh / stop.sh, cleanup). Source
+# this file with ROOT_DIR already set.
 
-LOCK_FILE="/var/tmp/evaluator-host.lock"
+LOCK_FILE="/var/tmp/evaluator.lock"
 # Reason for an in-script failure that occurred AFTER clx_prepare_run_dir
-# (so RUN_DIR exists) but BEFORE evaluator.sh / docker run took over.
-# The wrapper's cleanup trap reads this to write a failure score.json.
+# (so RUN_DIR exists) but BEFORE the scoring pipeline produced score.json.
+# The evaluator cleanup trap reads this to write a failure score.json.
 HOST_FAILURE_REASON=""
 
-clx_log() { printf '[host] %s\n' "$*" >&2; }
-clx_die() { printf 'evaluator-host: %s\n' "$*" >&2; exit "${2:-1}"; }
+clx_log() { printf '[contestant] %s\n' "$*" >&2; }
+clx_die() {
+    local message="$1"
+    local rc="${2:-1}"
+    printf 'evaluator: %s\n' "${message}" >&2
+    exit "${rc}"
+}
 clx_die_with_reason() {
     HOST_FAILURE_REASON="$1"
-    printf 'evaluator-host: %s\n' "$1" >&2
-    exit "${2:-1}"
+    printf 'evaluator: %s\n' "$1" >&2
+    exit "${2:-2}"
 }
 
 clx_acquire_lock() {
@@ -29,10 +34,6 @@ clx_acquire_lock() {
 
 clx_precheck_ports() {
     # Args: ports to require free. Caller responsibility.
-    # evaluator-local.sh checks only 8080 (MediaMTX is owned by evaluator.sh
-    # via the idempotent start_rtsp.sh and may already be up from a prior
-    # deploy.sh). evaluator-host.sh checks 8080 and 554 (the container will
-    # bind 554 via --network host with CAP_NET_BIND_SERVICE).
     local ports=("$@")
     (( ${#ports[@]} > 0 )) || { printf 'clx_precheck_ports: at least one port required\n' >&2; exit 1; }
     local query="" p
@@ -43,7 +44,7 @@ clx_precheck_ports() {
     local busy
     busy="$(ss -lntH "${query}" 2>/dev/null || true)"
     if [[ -n "${busy}" ]]; then
-        printf 'evaluator-host: port(s) %s occupied:\n%s\n' "${ports[*]}" "${busy}" >&2
+        printf 'evaluator: port(s) %s occupied:\n%s\n' "${ports[*]}" "${busy}" >&2
         exit 1
     fi
 }
@@ -60,9 +61,9 @@ clx_prepare_run_dir() {
 
 clx_extract_submission() {
     local zip_path="$1"
-    [[ -f "${zip_path}" ]] || clx_die_with_reason "submission zip not found: ${zip_path}"
+    [[ -f "${zip_path}" ]] || clx_die "submission zip not found: ${zip_path}" 1
     rm -rf "${STAGE_DIR}"; mkdir -p "${STAGE_DIR}"
-    unzip -qq "${zip_path}" -d "${STAGE_DIR}" || clx_die_with_reason "unzip failed"
+    unzip -qq "${zip_path}" -d "${STAGE_DIR}" || clx_die "unzip failed" 1
     # Lift single-top-dir layout if present.
     if [[ ! -f "${STAGE_DIR}/start.sh" ]]; then
         local inner
@@ -72,7 +73,7 @@ clx_extract_submission() {
             rmdir "${inner}" 2>/dev/null || true
         fi
     fi
-    [[ -f "${STAGE_DIR}/start.sh" ]] || clx_die_with_reason "missing start.sh"
+    [[ -f "${STAGE_DIR}/start.sh" ]] || clx_die_with_reason "contestant_frontend_unavailable" 2
     chmod +x "${STAGE_DIR}/start.sh"
     [[ -f "${STAGE_DIR}/stop.sh" ]] && chmod +x "${STAGE_DIR}/stop.sh"
     return 0
@@ -109,7 +110,7 @@ clx_cleanup_contestant() {
         sleep 1
         kill -9 -- "-${CONTESTANT_PID}" 2>/dev/null || true
     fi
-    fuser -k 8080/tcp 554/tcp 2>/dev/null || true
+    fuser -k 8080/tcp 2>/dev/null || true
 }
 
 clx_emit_score_to_fd3() {

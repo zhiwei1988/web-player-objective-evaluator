@@ -2,9 +2,8 @@
 # Build-host development helper: ensure watermarked reference streams exist and
 # are fresh. RTSP server lifecycle is owned per-run by scripts/evaluator.sh —
 # this script no longer starts MediaMTX. After a successful deploy.sh, run
-# scripts/evaluator-local.sh (or scripts/evaluator-host.sh in containerized
-# mode) to actually execute an evaluation; MediaMTX will be brought up and
-# torn down inside that lifecycle.
+# scripts/evaluator.sh to execute an evaluation; MediaMTX will be brought up
+# and torn down inside that lifecycle.
 
 set -euo pipefail
 

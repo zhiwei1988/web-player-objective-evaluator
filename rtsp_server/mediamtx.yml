@@ -4,8 +4,7 @@
 # MediaMTX spawns ffmpeg to loop the pre-encoded MP4 with -c:v copy (no re-encode).
 #
 # Port 554 is below 1024 and requires CAP_NET_BIND_SERVICE on the mediamtx
-# binary (set by scripts/build.sh on the build host) or --cap-add=NET_BIND_SERVICE
-# on the docker run (set by scripts/evaluator-host.sh in the container path).
+# binary, set by scripts/build.sh on the build host.
 #
 # IMPORTANT: MediaMTX does NOT expand env vars or templates in YAML string values.
 # The `-i streams/...` path is RELATIVE; scripts/start_rtsp.sh `cd`s into the repo

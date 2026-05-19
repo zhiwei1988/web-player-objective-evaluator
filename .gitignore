@@ -35,10 +35,6 @@ results/*/
 # Generated test_submission zips (built from src/ by build_test_zips.sh)
 test_submissions/*.zip
 
-# Portable bundle staging + output
-.playwright/
-dist/
-
 # Misc
 *.pyc
 __pycache__/
