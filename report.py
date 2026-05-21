@@ -195,7 +195,15 @@ def render_report(
         expected_fps = profile_score["expected_fps"]
         full_ratio = profile_score.get("fps_full_threshold_used")
         partial_ratio = profile_score.get("fps_partial_threshold_used")
-        if isinstance(full_ratio, (int, float)) and isinstance(partial_ratio, (int, float)):
+        fps_mode = profile_score.get("fps_scoring_mode")
+        if fps_mode == "linear_absolute":
+            full_score = profile_score.get("fps_linear_full_score", 5)
+            fps_band_row = (
+                f"<tr><th>fps formula</th><td>"
+                f"linear absolute: min(measured_fps / {expected_fps:g}, 1) × {full_score}"
+                f"</td></tr>"
+            )
+        elif isinstance(full_ratio, (int, float)) and isinstance(partial_ratio, (int, float)):
             fps_band_row = (
                 f"<tr><th>fps band</th><td>"
                 f"full ≥ {full_ratio:.2f} ({expected_fps * full_ratio:.2f} fps), "
@@ -241,18 +249,20 @@ def render_report(
             f'<span class="{gate_class}">gated: {html.escape(gate_reason)}</span>'
             if gated else '<span class="ok">scored</span>'
         )
-        # When the gate trips on 4K FPS, surface the exact ratio + fps cutoff
-        # so the contestant understands what 4K throughput would have unlocked CPU.
+        # When the gate trips on sampled-profile FPS, surface the exact ratio
+        # and cutoff so the contestant understands what throughput would have
+        # unlocked CPU.
         gate_callout = ""
-        if gated and gate_reason == "4k_fps_below_threshold":
+        gate_profile = cpu.get("gate_profile") or cpu.get("measured_on_profile") or "2k"
+        if gated and gate_reason == f"{gate_profile}_fps_below_threshold":
             gate_ratio = thresholds.get("gate_fps_ratio")
             if isinstance(gate_ratio, (int, float)):
-                expected_4k = float(PROFILES["4k"].fps) if "4k" in PROFILES else None
-                cutoff_fps = expected_4k * gate_ratio if expected_4k else None
-                cutoff_str = f" ({cutoff_fps:.2f} fps against expected {expected_4k:g})" if cutoff_fps else ""
+                expected = float(cpu.get("expected_fps") or PROFILES[gate_profile].fps)
+                cutoff_fps = expected * gate_ratio
+                cutoff_str = f" ({cutoff_fps:.2f} fps against expected {expected:g})"
                 gate_callout = (
                     f'<p class="fail"><strong>CPU gate:</strong> requires '
-                    f'4K measured_fps / expected_fps ≥ {gate_ratio:.2f}{cutoff_str}.</p>'
+                    f'{html.escape(gate_profile)} measured_fps / expected_fps ≥ {gate_ratio:.2f}{cutoff_str}.</p>'
                 )
         return f'''
 <section>
@@ -266,6 +276,9 @@ def render_report(
     <tr><th>ncpu</th><td>{cpu.get("ncpu")}</td></tr>
     <tr><th>normalization</th><td><code>{html.escape(cpu.get("normalization") or "")}</code></td></tr>
     <tr><th>measured on profile</th><td>{html.escape(cpu.get("measured_on_profile") or "")}</td></tr>
+    <tr><th>gate profile</th><td>{html.escape(cpu.get("gate_profile") or "")}</td></tr>
+    <tr><th>gate measured fps</th><td>{_fmt_metric(cpu.get("measured_fps"))}</td></tr>
+    <tr><th>gate expected fps</th><td>{_fmt_metric(cpu.get("expected_fps"))}</td></tr>
   </table>
   <details><summary>thresholds_used</summary>
     <pre><code>{thresholds_json}</code></pre>

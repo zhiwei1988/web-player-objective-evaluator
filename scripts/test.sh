@@ -60,14 +60,15 @@ done
 #   total_ge       - objective_total must be >= <arg>
 #   fps_2k_eq      - 2K profile FPS score must equal <arg>
 #   fps_4k_eq      - 4K profile FPS score must equal <arg>
+#   fps_4k_le      - 4K profile FPS score must be <= <arg>
 #   correctness_lt - at least one profile's correctness < <arg>
 #   reason_2k      - 2K round failure reason must contain <arg>
 #   reason_4k      - 4K round failure reason must contain <arg>
 #   reason_global  - top-level failure reason must contain <arg>
 declare -A EXPECTED=(
     [reference]="total_ge:10"
-    [static_frame]="fps_2k_eq:0,fps_4k_eq:0"
-    [iframe_only]="fps_2k_eq:0,fps_4k_eq:0"
+    [static_frame]="fps_2k_eq:0,fps_4k_le:0.1"
+    [iframe_only]="fps_2k_eq:0,fps_4k_le:0.1"
     [fake_overlay]="correctness_lt:5"
     [missing_start]="reason_global:contestant_frontend_unavailable"
     [never_ready]="reason_2k:startup timeout"
@@ -137,6 +138,8 @@ elif kind == "fps_2k_eq":
     ok = profile("2k").get("fps_points") == int(arg)
 elif kind == "fps_4k_eq":
     ok = profile("4k").get("fps_points") == int(arg)
+elif kind == "fps_4k_le":
+    ok = float(profile("4k").get("fps_points") or 0) <= float(arg)
 elif kind == "correctness_lt":
     ok = (profile("2k").get("correctness_points", 99) < int(arg)
           or profile("4k").get("correctness_points", 99) < int(arg))

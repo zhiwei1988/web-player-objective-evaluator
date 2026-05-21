@@ -24,7 +24,7 @@ class ProfileSpec:
     stream_file: str             # path relative to repo root
     reference_dir: str           # path relative to repo root
     duration_s: int = 30
-    cpu_sampled: bool = False    # True → runner.py starts CPU sampler in this round
+    cpu_sampled: bool = False    # True -> runner.py starts CPU sampler in this round
 
 
 RTSP_PORT = 554
@@ -36,22 +36,23 @@ PROFILES: dict[str, ProfileSpec] = {
         name="2k",
         width=2560,
         height=1440,
-        fps=25,
+        fps=20,
         bitrate="4M",
         rtsp_path="test/h265_2560_1440",
         stream_file="streams/h265_2560_1440.mp4",
         reference_dir="reference/2k",
+        cpu_sampled=True,
     ),
     "4k": ProfileSpec(
         name="4k",
         width=3840,
         height=2160,
-        fps=25,
+        fps=20,
         bitrate="8M",
         rtsp_path="test/h265_3840_2160",
         stream_file="streams/h265_3840_2160.mp4",
         reference_dir="reference/4k",
-        cpu_sampled=True,
+        cpu_sampled=False,
     ),
 }
 

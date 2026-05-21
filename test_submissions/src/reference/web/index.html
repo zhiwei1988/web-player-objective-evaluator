@@ -26,9 +26,9 @@
   const params = new URLSearchParams(window.location.search);
   const profile = params.get('profile') === '4k' ? '4k' : '2k';
 
-  // Match the watermark generator: 25 fps × 30 s duration = 750 frames.
-  const TOTAL = 750;
-  const FPS = 25;
+  // Match the watermark generator: 20 fps × 30 s duration = 600 frames.
+  const TOTAL = 600;
+  const FPS = 20;
   const pad = (n) => String(n).padStart(5, '0');
 
   const player = document.getElementById('player');

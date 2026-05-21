@@ -16,38 +16,40 @@ def fps_at(profile: str, ratio: float) -> float:
     return EXPECTED_FPS[profile] * ratio
 
 
-# 1.1 — per-profile full-credit cutoff -----------------------------------------
+# 1.1 — 2K threshold cutoffs ----------------------------------------------------
 
-@pytest.mark.parametrize("profile, full_ratio", [("2k", 0.85), ("4k", 0.65)])
-def test_score_fps_full_at_boundary(profile, full_ratio):
-    assert scorer.score_fps(fps_at(profile, full_ratio), EXPECTED_FPS[profile], profile) == 5
-
-
-@pytest.mark.parametrize("profile, full_ratio", [("2k", 0.85), ("4k", 0.65)])
-def test_score_fps_full_just_above_boundary(profile, full_ratio):
-    assert scorer.score_fps(fps_at(profile, full_ratio + 0.01), EXPECTED_FPS[profile], profile) == 5
+def test_expected_fps_defaults_to_20_for_both_profiles():
+    assert scorer.EXPECTED_FPS == {"2k": 20.0, "4k": 20.0}
 
 
-@pytest.mark.parametrize("profile, full_ratio", [("2k", 0.85), ("4k", 0.65)])
-def test_score_fps_just_below_full_falls_to_partial(profile, full_ratio):
-    assert scorer.score_fps(fps_at(profile, full_ratio - 0.01), EXPECTED_FPS[profile], profile) == 3
+def test_score_fps_2k_full_at_boundary():
+    assert scorer.score_fps(fps_at("2k", 0.85), EXPECTED_FPS["2k"], "2k") == 5
 
 
-# 1.2 — per-profile partial-credit cutoff --------------------------------------
-
-@pytest.mark.parametrize("profile, partial_ratio", [("2k", 0.50), ("4k", 0.40)])
-def test_score_fps_partial_at_boundary(profile, partial_ratio):
-    assert scorer.score_fps(fps_at(profile, partial_ratio), EXPECTED_FPS[profile], profile) == 3
+def test_score_fps_2k_just_below_full_falls_to_partial():
+    assert scorer.score_fps(fps_at("2k", 0.84), EXPECTED_FPS["2k"], "2k") == 3
 
 
-@pytest.mark.parametrize("profile, partial_ratio", [("2k", 0.50), ("4k", 0.40)])
-def test_score_fps_partial_just_above_boundary(profile, partial_ratio):
-    assert scorer.score_fps(fps_at(profile, partial_ratio + 0.01), EXPECTED_FPS[profile], profile) == 3
+def test_score_fps_2k_partial_at_boundary():
+    assert scorer.score_fps(fps_at("2k", 0.50), EXPECTED_FPS["2k"], "2k") == 3
 
 
-@pytest.mark.parametrize("profile, partial_ratio", [("2k", 0.50), ("4k", 0.40)])
-def test_score_fps_just_below_partial_is_zero(profile, partial_ratio):
-    assert scorer.score_fps(fps_at(profile, partial_ratio - 0.01), EXPECTED_FPS[profile], profile) == 0
+def test_score_fps_2k_just_below_partial_is_zero():
+    assert scorer.score_fps(fps_at("2k", 0.49), EXPECTED_FPS["2k"], "2k") == 0
+
+
+# 1.2 — 4K linear absolute FPS scoring -----------------------------------------
+
+def test_score_fps_4k_linear_absolute_four_fps_gets_one_point():
+    assert scorer.score_fps(4.0, EXPECTED_FPS["4k"], "4k") == 1.0
+
+
+def test_score_fps_4k_linear_absolute_caps_at_full_score():
+    assert scorer.score_fps(25.0, EXPECTED_FPS["4k"], "4k") == 5.0
+
+
+def test_score_fps_4k_linear_absolute_fractional_points():
+    assert scorer.score_fps(13.4, EXPECTED_FPS["4k"], "4k") == 3.35
 
 
 # 1.3 — unknown profile fails loudly -------------------------------------------
@@ -57,17 +59,17 @@ def test_score_fps_unknown_profile_raises():
         scorer.score_fps(20.0, 25.0, "8k")
 
 
-# 1.4 — dicts cover every profile in PROFILES ----------------------------------
+# 1.4 — threshold dicts only govern threshold-scored profiles ------------------
 
-def test_fps_threshold_dicts_cover_all_profiles():
-    profiles = set(PROFILES)
-    assert set(scorer.FPS_FULL_RATIO_BY_PROFILE) == profiles
-    assert set(scorer.FPS_PARTIAL_RATIO_BY_PROFILE) == profiles
+def test_fps_threshold_dicts_cover_threshold_scored_profiles():
+    assert set(scorer.FPS_FULL_RATIO_BY_PROFILE) == {"2k"}
+    assert set(scorer.FPS_PARTIAL_RATIO_BY_PROFILE) == {"2k"}
+    assert "4k" in PROFILES
 
 
 # 1.5 — partial strictly below full per profile --------------------------------
 
-@pytest.mark.parametrize("profile", list(PROFILES.keys()))
+@pytest.mark.parametrize("profile", list(scorer.FPS_FULL_RATIO_BY_PROFILE.keys()))
 def test_partial_strictly_below_full(profile):
     assert scorer.FPS_PARTIAL_RATIO_BY_PROFILE[profile] < scorer.FPS_FULL_RATIO_BY_PROFILE[profile]
 
@@ -101,12 +103,15 @@ def _profile_metrics_with_cpu(measured_fps: float, mean_cpu: float) -> dict:
 def test_build_score_emits_per_profile_audit_fields():
     out = scorer.build_score(
         {
-            "2k": _profile_metrics(EXPECTED_FPS["2k"]),
-            "4k": _profile_metrics_with_cpu(EXPECTED_FPS["4k"], 2.0),
+            "2k": _profile_metrics_with_cpu(EXPECTED_FPS["2k"], 2.0),
+            "4k": _profile_metrics(4.0),
         },
         chromium_version="test",
     )
     assert out["2k"]["fps_full_threshold_used"] == scorer.FPS_FULL_RATIO_BY_PROFILE["2k"]
     assert out["2k"]["fps_partial_threshold_used"] == scorer.FPS_PARTIAL_RATIO_BY_PROFILE["2k"]
-    assert out["4k"]["fps_full_threshold_used"] == scorer.FPS_FULL_RATIO_BY_PROFILE["4k"]
-    assert out["4k"]["fps_partial_threshold_used"] == scorer.FPS_PARTIAL_RATIO_BY_PROFILE["4k"]
+    assert out["2k"]["expected_fps"] == 20.0
+    assert out["4k"]["fps_points"] == 1.0
+    assert out["4k"]["fps_scoring_mode"] == "linear_absolute"
+    assert out["4k"]["fps_linear_full_score"] == 5
+    assert out["4k"]["expected_fps"] == 20.0

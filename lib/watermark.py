@@ -226,6 +226,8 @@ def generate_frame(width: int, height: int, frame_number: int, fps: float) -> Im
 def write_sequence(out_dir: Path, width: int, height: int, fps: float, duration_s: float) -> int:
     """Write frame_NNNNN.png files into `out_dir`. Returns frame count."""
     out_dir.mkdir(parents=True, exist_ok=True)
+    for old in out_dir.glob("frame_*.png"):
+        old.unlink()
     total = int(round(fps * duration_s))
     for n in range(total):
         img = generate_frame(width, height, n, fps)

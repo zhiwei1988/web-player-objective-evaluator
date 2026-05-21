@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 
 import pytest
 
@@ -45,7 +47,7 @@ def test_frame_delta_histogram_handles_loop_boundary(tmp_path):
 
     metrics = analyzer.CodecMetrics(
         total_shots=4,
-        frame_numbers=[748, 749, 0, 1],
+        frame_numbers=[598, 599, 0, 1],
         duration=0.12,
     )
 
@@ -97,3 +99,52 @@ def test_metrics_to_dict_keeps_existing_and_new_keys():
         "frame_progress_fps",
     ]:
         assert key in out
+
+
+def test_analyzer_cli_passes_2k_cpu_meta_through(tmp_path):
+    shots = tmp_path / "2k_screenshots"
+    shots.mkdir()
+    (shots / "timestamps.json").write_text(json.dumps({
+        "timestamps": [],
+        "target_fps": 20,
+        "target_duration_s": 30,
+    }))
+    cpu = {
+        "mean_percent": 2.5,
+        "sample_count": 5,
+        "sample_window_ms": 30000,
+        "ncpu": 8,
+        "clk_tck": 100,
+        "normalization": "all_cores_total",
+        "pgid": 123,
+        "extra_root_pid": 456,
+        "sample_hz_used": 1.0,
+        "exclude_chrome_gpu": True,
+        "excluded_gpu_pids": [],
+        "per_process_top": [],
+    }
+    (shots / "capture_meta.json").write_text(json.dumps({"profile": "2k", "cpu": cpu}))
+    output = tmp_path / "2k_metrics.json"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "analyzer.py",
+            "--profile",
+            "2k",
+            "--screenshots",
+            str(shots),
+            "--reference",
+            str(tmp_path / "reference"),
+            "--output",
+            str(output),
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    out = json.loads(output.read_text())
+    assert out["cpu"] == cpu

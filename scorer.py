@@ -1,7 +1,7 @@
 """Score the analyzer's metrics into the final 30-point objective total.
 
 5 correctness points + 5 FPS points per profile (two profiles = 20) plus a
-0–10 CPU sub-score sampled during the 4K profile capture window. Thresholds
+0–10 CPU sub-score sampled during the 2K profile capture window. Thresholds
 are duplicated from openspec/specs/evaluator/spec.md and design.md; bumping
 one without bumping the others is a regression.
 """
@@ -21,10 +21,10 @@ EXPECTED_FPS: dict[str, float] = {name: float(spec.fps) for name, spec in PROFIL
 
 # FPS scoring tunables. Per-profile so 2K (easier) can be held to a stricter
 # bar than 4K. See openspec/specs/evaluator/spec.md — Scoring requirement.
-FPS_FULL_RATIO_BY_PROFILE: dict[str, float] = {"2k": 0.85, "4k": 0.65}
+FPS_FULL_RATIO_BY_PROFILE: dict[str, float] = {"2k": 0.85}
 """measured_fps / expected_fps at or above this → full 5 FPS points."""
 
-FPS_PARTIAL_RATIO_BY_PROFILE: dict[str, float] = {"2k": 0.50, "4k": 0.40}
+FPS_PARTIAL_RATIO_BY_PROFILE: dict[str, float] = {"2k": 0.50}
 """measured_fps / expected_fps at or above this (but below the full ratio)
 → partial 3 FPS points. Below this → 0 FPS points."""
 
@@ -36,15 +36,18 @@ def _validate_fps_thresholds() -> None:
     new profile in lib/profiles.PROFILES MUST also add entries to both dicts —
     no silent fallback ratio.
     """
-    profiles = set(PROFILES)
-    missing_full = profiles - set(FPS_FULL_RATIO_BY_PROFILE)
-    missing_partial = profiles - set(FPS_PARTIAL_RATIO_BY_PROFILE)
+    threshold_profiles = {"2k"}
+    missing_full = threshold_profiles - set(FPS_FULL_RATIO_BY_PROFILE)
+    missing_partial = threshold_profiles - set(FPS_PARTIAL_RATIO_BY_PROFILE)
     if missing_full or missing_partial:
         raise RuntimeError(
             f"FPS scoring dicts incomplete: missing from FPS_FULL_RATIO_BY_PROFILE={sorted(missing_full)}, "
             f"missing from FPS_PARTIAL_RATIO_BY_PROFILE={sorted(missing_partial)}"
         )
-    for p in profiles:
+    unknown = (set(FPS_FULL_RATIO_BY_PROFILE) | set(FPS_PARTIAL_RATIO_BY_PROFILE)) - set(PROFILES)
+    if unknown:
+        raise RuntimeError(f"FPS scoring dicts name unknown profiles: {sorted(unknown)}")
+    for p in threshold_profiles:
         full = FPS_FULL_RATIO_BY_PROFILE[p]
         partial = FPS_PARTIAL_RATIO_BY_PROFILE[p]
         if partial >= full:
@@ -59,10 +62,7 @@ _validate_fps_thresholds()
 # CPU sub-score tunables. Module-level so calibration is a one-line change.
 # Effective values applied to each run are echoed into score.json.cpu.thresholds_used.
 CPU_GATE_FPS_RATIO: float = 0.65
-"""measured_4k_fps / expected_4k_fps below this → CPU score gated to 0.
-Aligned with FPS_FULL_RATIO_BY_PROFILE["4k"]: a submission that does not earn
-full 4K FPS credit cannot earn any CPU points. The two constants are independent
-and MAY drift apart deliberately in a future scoring-policy change."""
+"""measured sampled-profile fps / expected fps below this -> CPU score gated to 0."""
 
 CPU_FULL_THRESHOLD_PERCENT: float = 5.0
 """mean_cpu_percent at or below this → full 10 points."""
@@ -81,7 +81,7 @@ CPU_MIN_SAMPLES: int = 3
 class ProfileScore:
     profile: str
     correctness_points: int
-    fps_points: int
+    fps_points: float
     measured_fps: float
     expected_fps: float
     watermark_recognition_rate: float
@@ -91,11 +91,11 @@ class ProfileScore:
     fps_partial_threshold_used: float
 
     @property
-    def total(self) -> int:
+    def total(self) -> float:
         return self.correctness_points + self.fps_points
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "correctness_points": self.correctness_points,
             "fps_points": self.fps_points,
             "total": self.total,
@@ -104,9 +104,16 @@ class ProfileScore:
             "watermark_recognition_rate": self.watermark_recognition_rate,
             "color_check_rate": self.color_check_rate,
             "mean_ssim": self.mean_ssim,
-            "fps_full_threshold_used": self.fps_full_threshold_used,
-            "fps_partial_threshold_used": self.fps_partial_threshold_used,
         }
+        if self.profile in FPS_FULL_RATIO_BY_PROFILE:
+            out["fps_full_threshold_used"] = self.fps_full_threshold_used
+            out["fps_partial_threshold_used"] = self.fps_partial_threshold_used
+        if self.profile == "4k":
+            out["fps_scoring_mode"] = "linear_absolute"
+            out["fps_linear_full_score"] = 5
+            out["fps_full_threshold_used"] = None
+            out["fps_partial_threshold_used"] = None
+        return out
 
 
 def score_correctness(rate_wm: float, rate_color: float, mean_ssim: float) -> int:
@@ -123,7 +130,7 @@ def score_correctness(rate_wm: float, rate_color: float, mean_ssim: float) -> in
     return 0
 
 
-def score_fps(measured: float, expected: float, profile: str) -> int:
+def score_fps(measured: float, expected: float, profile: str) -> float:
     """Score the unique-frame FPS metric, with per-profile thresholds.
 
     The full-credit and partial-credit ratios are looked up from
@@ -134,8 +141,12 @@ def score_fps(measured: float, expected: float, profile: str) -> int:
     Partial (3): measured / expected ≥ FPS_PARTIAL_RATIO_BY_PROFILE[profile].
     Zero (0): below the partial ratio.
     """
+    if profile not in PROFILES:
+        raise KeyError(profile)
     if expected <= 0:
-        return 0
+        return 0.0
+    if profile == "4k":
+        return round(min(max(measured, 0.0) / expected, 1.0) * 5.0, 2)
     full_ratio = FPS_FULL_RATIO_BY_PROFILE[profile]
     partial_ratio = FPS_PARTIAL_RATIO_BY_PROFILE[profile]
     ratio = measured / expected
@@ -146,26 +157,31 @@ def score_fps(measured: float, expected: float, profile: str) -> int:
     return 0
 
 
+CPU_PROFILE = next((name for name, spec in PROFILES.items() if spec.cpu_sampled), "2k")
+
+
 def score_cpu(
     mean_cpu_percent: float | None,
-    measured_4k_fps: float,
-    expected_4k_fps: float = EXPECTED_FPS["4k"],
+    measured_fps: float,
+    expected_fps: float | None = None,
     gate_fps_ratio: float = CPU_GATE_FPS_RATIO,
 ) -> tuple[int, str | None]:
     """Map a measured CPU mean into 0-10 points with gating.
 
     Evaluation order (first match wins):
-        1. fps gate (4K round didn't really play) → 0, "4k_fps_below_threshold"
+        1. fps gate (sampled round didn't really play) -> 0, "<profile>_fps_below_threshold"
         2. mean missing/None → 0, "sampler_no_data"
         3. mean ≤ CPU_FULL_THRESHOLD_PERCENT → 10, None
         4. mean > CPU_ZERO_THRESHOLD_PERCENT  → 0, None
         5. partial band → linear decay anchored at PARTIAL_START / ZERO,
                           rounded, clamped to [0, 10]
     """
-    if expected_4k_fps <= 0:
-        return 0, "4k_fps_below_threshold"
-    if measured_4k_fps / expected_4k_fps < gate_fps_ratio:
-        return 0, "4k_fps_below_threshold"
+    expected = expected_fps if expected_fps is not None else EXPECTED_FPS[CPU_PROFILE]
+    fps_gate_reason = f"{CPU_PROFILE}_fps_below_threshold"
+    if expected <= 0:
+        return 0, fps_gate_reason
+    if measured_fps / expected < gate_fps_ratio:
+        return 0, fps_gate_reason
     if mean_cpu_percent is None:
         return 0, "sampler_no_data"
     if mean_cpu_percent <= CPU_FULL_THRESHOLD_PERCENT:
@@ -196,8 +212,8 @@ def _build_cpu_block(
 
     Precedence:
         1. cpu_override_reason (e.g. "container_mode_unsupported", "host_failure")
-        2. profile_metrics["4k"] is None                  → "4k_round_failed"
-        3. profile_metrics["4k"]["cpu"] missing/None      → "sampler_no_data"
+        2. profile_metrics[CPU_PROFILE] is None           → "<profile>_round_failed"
+        3. profile_metrics[CPU_PROFILE]["cpu"] missing    → "sampler_no_data"
         4. sample_count < CPU_MIN_SAMPLES                 → "sampler_no_data"
         5. normal scoring via score_cpu
     """
@@ -208,7 +224,10 @@ def _build_cpu_block(
         "sample_window_ms": 0,
         "ncpu": None,
         "normalization": "all_cores_total",
-        "measured_on_profile": "4k",
+        "measured_on_profile": CPU_PROFILE,
+        "gate_profile": CPU_PROFILE,
+        "expected_fps": EXPECTED_FPS[CPU_PROFILE],
+        "measured_fps": 0.0,
         "thresholds_used": _thresholds_used(None),
         "gated": True,
         "gate_reason": None,
@@ -217,17 +236,16 @@ def _build_cpu_block(
         block["gate_reason"] = cpu_override_reason
         return block
 
-    fourk_metrics = profile_metrics.get("4k")
-    if fourk_metrics is None:
-        block["gate_reason"] = "4k_round_failed"
+    sampled_metrics = profile_metrics.get(CPU_PROFILE)
+    if sampled_metrics is None:
+        block["gate_reason"] = f"{CPU_PROFILE}_round_failed"
         return block
 
-    cpu_in = fourk_metrics.get("cpu")
-    measured_4k_fps = float(fourk_metrics.get("measured_fps") or 0.0)
+    cpu_in = sampled_metrics.get("cpu")
+    measured_fps = float(sampled_metrics.get("measured_fps") or 0.0)
+    block["measured_fps"] = measured_fps
     if cpu_in is None:
-        points, reason = score_cpu(None, measured_4k_fps)
-        block["points"] = points
-        block["gate_reason"] = reason or "sampler_no_data"
+        block["gate_reason"] = "sampler_no_data"
         return block
 
     sample_count = int(cpu_in.get("sample_count") or 0)
@@ -245,7 +263,11 @@ def _build_cpu_block(
     block["normalization"] = cpu_in.get("normalization") or "all_cores_total"
     block["thresholds_used"] = _thresholds_used(sample_hz)
 
-    points, reason = score_cpu(mean_pct, measured_4k_fps)
+    if mean_pct is None:
+        block["gate_reason"] = "sampler_no_data"
+        return block
+
+    points, reason = score_cpu(mean_pct, measured_fps)
     block["points"] = points
     block["gate_reason"] = reason
     block["gated"] = reason is not None
@@ -267,8 +289,8 @@ def score_profile(profile: str, metrics: dict) -> ProfileScore:
         watermark_recognition_rate=rate_wm,
         color_check_rate=rate_color,
         mean_ssim=mean_ssim,
-        fps_full_threshold_used=FPS_FULL_RATIO_BY_PROFILE[profile],
-        fps_partial_threshold_used=FPS_PARTIAL_RATIO_BY_PROFILE[profile],
+        fps_full_threshold_used=FPS_FULL_RATIO_BY_PROFILE.get(profile, 0.0),
+        fps_partial_threshold_used=FPS_PARTIAL_RATIO_BY_PROFILE.get(profile, 0.0),
     )
 
 

@@ -408,11 +408,14 @@ def _write_capture_meta(output: Path, profile: str, result: CaptureResult) -> No
     Only produced when sampling was requested. Absence is meaningful — the
     analyzer/scorer interprets it as 'sampler did not run'.
     """
+    cpu = result.cpu_sample_result
+    if cpu is not None and hasattr(cpu, "to_dict"):
+        cpu = cpu.to_dict()
     meta = {
         "profile": profile,
         "capture_started_at_epoch": result.capture_started_at_epoch,
         "capture_ended_at_epoch": result.capture_ended_at_epoch,
-        "cpu": result.cpu_sample_result,
+        "cpu": cpu,
     }
     (output / "capture_meta.json").write_text(json.dumps(meta, indent=2))
 
@@ -446,7 +449,7 @@ def _cli() -> int:
     p.add_argument("--fps", required=True, type=float)
     p.add_argument("--contestant-pgid", type=int, default=None,
                    help="When set AND the active profile has cpu_sampled=True "
-                        "(currently 4k only), sample the PGID's CPU.")
+                        "(currently 2k only), sample the PGID's CPU.")
     p.add_argument("--cpu-sample-hz", type=float, default=None,
                    help="Sampler tick rate (debug-only, will be retired once calibrated).")
     p.add_argument("--capture-strategy", choices=CAPTURE_STRATEGIES, default=None,

@@ -11,10 +11,12 @@ def _profile_score(measured_fps: float = 16.0) -> dict:
         "fps_points": 5,
         "total": 10,
         "measured_fps": measured_fps,
-        "expected_fps": 25.0,
+        "expected_fps": 20.0,
         "watermark_recognition_rate": 1.0,
         "color_check_rate": 1.0,
         "mean_ssim": 0.95,
+        "fps_scoring_mode": "linear_absolute",
+        "fps_linear_full_score": 5,
     }
 
 
@@ -42,6 +44,10 @@ def test_report_renders_capture_diagnostics_and_local_links(tmp_path):
             "points": 10,
             "gated": False,
             "gate_reason": None,
+            "measured_on_profile": "2k",
+            "gate_profile": "2k",
+            "expected_fps": 20.0,
+            "measured_fps": 18.0,
             "thresholds_used": {},
         },
     }
@@ -63,6 +69,9 @@ def test_report_renders_capture_diagnostics_and_local_links(tmp_path):
     assert "frame progress fps" in html
     assert "2k_metrics.json" in html
     assert "4k_screenshots/" in html
+    assert "measured on profile" in html
+    assert "2k" in html
+    assert "linear" in html
     assert 'src="http://' not in html
     assert 'src="https://' not in html
     assert 'href="http://' not in html

@@ -90,9 +90,9 @@ The evaluation host is Ubuntu 24.04 with Google Chrome (the exact Chrome version
 
 ## Scoring breakdown
 
-- **2K profile** (10 pts): 5 correctness + 5 fps
-- **4K profile** (10 pts): 5 correctness + 5 fps
-- **CPU sub-score** (10 pts): sampled during the 4K capture window; gated to 0 if 4K fps fails to clear the partial-credit threshold (`measured/expected ≥ 0.25`)
+- **2K profile** (10 pts): 5 correctness + 5 threshold-scored fps against the 20fps source
+- **4K profile** (10 pts): 5 correctness + 5 linear fps points (`min(measured_fps / 20, 1) * 5`)
+- **CPU sub-score** (10 pts): sampled during the 2K capture window; gated to 0 if 2K fps fails to clear the CPU throughput gate
 - **Total**: 30
 
 ## Result artifacts

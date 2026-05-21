@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -37,6 +38,51 @@ def test_timestamps_include_capture_metadata(tmp_path):
     assert out["capture_strategy"] == "playwright"
     assert out["jpeg_quality"] == 90
     assert out["clip"] == {"x": 0, "y": 0, "width": 1280, "height": 720}
+
+
+def test_capture_meta_records_2k_cpu_profile(tmp_path):
+    result = runner.CaptureResult(
+        success=True,
+        cpu_sample_result=SimpleNamespace(to_dict=lambda: {
+            "mean_percent": 2.0,
+            "sample_count": 4,
+            "sample_window_ms": 30000,
+            "ncpu": 8,
+            "clk_tck": 100,
+            "normalization": "all_cores_total",
+            "pgid": 123,
+            "extra_root_pid": 456,
+            "sample_hz_used": 1.0,
+            "exclude_chrome_gpu": True,
+            "excluded_gpu_pids": [],
+            "per_process_top": [],
+        }),
+        capture_started_at_epoch=1.0,
+        capture_ended_at_epoch=31.0,
+    )
+
+    runner._write_capture_meta(tmp_path, "2k", result)
+
+    out = json.loads((tmp_path / "capture_meta.json").read_text())
+    assert out["profile"] == "2k"
+    assert out["cpu"]["mean_percent"] == 2.0
+
+
+def test_capture_meta_accepts_already_serialized_cpu_dict(tmp_path):
+    result = runner.CaptureResult(
+        success=True,
+        cpu_sample_result={
+            "mean_percent": 3.0,
+            "sample_count": 4,
+        },
+        capture_started_at_epoch=1.0,
+        capture_ended_at_epoch=31.0,
+    )
+
+    runner._write_capture_meta(tmp_path, "2k", result)
+
+    out = json.loads((tmp_path / "capture_meta.json").read_text())
+    assert out["cpu"] == {"mean_percent": 3.0, "sample_count": 4}
 
 
 def test_capture_strategy_names_are_explicit():

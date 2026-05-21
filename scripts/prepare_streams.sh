@@ -4,8 +4,8 @@
 # iterates that registry; resolutions/fps/bitrates are never hard-coded here.
 #
 # Outputs (driven by PROFILES):
-#   streams/h265_2560_1440.mp4   (2560x1440, 25fps, libx265 4 Mbps, 30s)
-#   streams/h265_3840_2160.mp4   (3840x2160, 25fps, libx265 8 Mbps, 30s)
+#   streams/h265_2560_1440.mp4   (2560x1440, 20fps, libx265 4 Mbps, 30s)
+#   streams/h265_3840_2160.mp4   (3840x2160, 20fps, libx265 8 Mbps, 30s)
 #   reference/2k/frame_NNNNN.png  — full sequence
 #   reference/4k/frame_NNNNN.png  — full sequence
 #

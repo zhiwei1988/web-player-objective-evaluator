@@ -20,13 +20,35 @@ die()  { printf 'deploy failed: %s\n' "$*" >&2; exit 1; }
 # truth for filenames.
 ensure_streams() {
     local script="${ROOT_DIR}/lib/watermark.py"
-    # Collect expected mp4 paths from the profile registry.
-    mapfile -t expected_mp4s < <(.venv/bin/python -c \
-        "from lib.profiles import PROFILES; print('\n'.join(s.stream_file for s in PROFILES.values()))")
-    local mp4 stale=0
-    for mp4 in "${expected_mp4s[@]}"; do
+    # Collect expected stream/reference shape from the profile registry. The
+    # reference frame count catches old 25fps outputs after the source profile
+    # changes to 20fps, even when mtimes alone look fresh.
+    mapfile -t expected_profiles < <(.venv/bin/python -c \
+        "from lib.profiles import PROFILES
+for s in PROFILES.values():
+    print(f'{s.stream_file}\t{s.reference_dir}\t{int(round(s.fps * s.duration_s))}\t{s.fps}')")
+    local entry stale=0
+    for entry in "${expected_profiles[@]}"; do
+        local mp4 refdir expected_frames expected_fps
+        IFS=$'\t' read -r mp4 refdir expected_frames expected_fps <<< "${entry}"
         local abs="${ROOT_DIR}/${mp4}"
-        if [[ ! -f "${abs}" || "${abs}" -ot "${script}" ]]; then
+        local ref_abs="${ROOT_DIR}/${refdir}"
+        local frame_count=0
+        local mp4_fps="" mp4_frames=""
+        if [[ -d "${ref_abs}" ]]; then
+            frame_count="$(find "${ref_abs}" -maxdepth 1 -type f -name 'frame_*.png' | wc -l)"
+        fi
+        if [[ -f "${abs}" ]]; then
+            mapfile -t stream_meta < <(ffprobe -v error -select_streams v:0 \
+                -show_entries stream=r_frame_rate,nb_frames \
+                -of default=nw=1:nk=1 "${abs}" 2>/dev/null || true)
+            mp4_fps="${stream_meta[0]:-}"
+            mp4_frames="${stream_meta[1]:-}"
+        fi
+        if [[ ! -f "${abs}" || "${abs}" -ot "${script}" \
+                || "${frame_count}" != "${expected_frames}" \
+                || "${mp4_fps}" != "${expected_fps}/1" \
+                || "${mp4_frames}" != "${expected_frames}" ]]; then
             stale=1; break
         fi
     done
