@@ -33,7 +33,8 @@ The evaluator does **not** depend on `apt`-installed copies of `ffmpeg`, `mediam
 | `scripts/teardown.sh`     | Stop MediaMTX and free ports `554`/`8080`                                    | After an evaluation session, or before bringing the host to idle |
 
 All six are idempotent and safe to re-run. Internal helpers also under `scripts/`:
-`prepare_streams.sh`, `start_rtsp.sh`, `health_check.sh`, `build_test_zips.sh`, and the shared `env.sh`.
+`prepare_streams.sh`, `start_rtsp.sh`, `health_check.sh`, `build_test_zips.sh`,
+`diagnose_run.py`, and the shared `env.sh`.
 
 ## Cold-start recipe
 
@@ -134,7 +135,7 @@ to use `measured_fps`; benchmark output is audit/tuning data only.
 ├── scripts/
 │   ├── setup.sh / build.sh / deploy.sh / test.sh / evaluator.sh   # lifecycle
 │   ├── prepare_streams.sh / start_rtsp.sh / health_check.sh        # internal helpers
-│   ├── build_test_zips.sh
+│   ├── build_test_zips.sh / diagnose_run.py
 │   └── env.sh                                                  # sourced helper
 ├── rtsp_server/mediamtx.yml                                    # config (binary lives in third_party/install)
 ├── third_party/{ffmpeg,mediamtx,tesseract,leptonica,libdmtx,x264,x265}/   # git submodules

@@ -85,11 +85,15 @@ case "${UBUNTU_VERSION}" in
         ;;
 esac
 
+# sudo -E preserves http_proxy/https_proxy/no_proxy so apt-get and the
+# python-based add-apt-repository can reach archive.ubuntu.com / launchpad.net
+# from behind a corporate proxy. For -E to actually keep the vars, sudoers
+# must whitelist them (see /etc/sudoers.d/proxy in the project README).
 _apt() {
     if [[ $EUID -eq 0 ]]; then
         apt-get "$@"
     elif command -v sudo >/dev/null; then
-        sudo apt-get "$@"
+        sudo -E apt-get "$@"
     else
         die "need root or sudo to run 'apt-get $*'"
     fi
@@ -100,7 +104,7 @@ _add_ppa() {
     if [[ $EUID -eq 0 ]]; then
         add-apt-repository -y "${ppa}"
     elif command -v sudo >/dev/null; then
-        sudo add-apt-repository -y "${ppa}"
+        sudo -E add-apt-repository -y "${ppa}"
     else
         die "need root or sudo to add ppa: ${ppa}"
     fi
