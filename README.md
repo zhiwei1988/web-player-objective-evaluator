@@ -103,7 +103,19 @@ Per run, under `results/<team_id>_<timestamp>/`:
 - `2k_metrics.json`, `4k_metrics.json`
 - `score.json`
 - `report.html` (internal-only)
+- `result.info` (contest-platform projection; audit copy)
 - `evaluator.log`
+
+Additionally, the evaluator publishes a byte-identical `result.info` to
+`$(dirname "<submission_zip>")/result.info` — the contest platform reads
+`result.info` from the directory the submission zip lives in, NOT from the
+internal staging dir `submissions/<team_id>/`. The published file is
+intentionally a lossy projection of `score.json`: its `|info|` block is
+contestant-visible (total + five item scores: 2K correctness, 2K FPS, 4K
+correctness, 4K FPS, CPU); its `|debug|` block carries organizer-facing
+diagnostics. Format spec is in `openspec/specs/evaluator/spec.md`
+(Requirement: Contest Platform Result Info); sample is at
+`reference/result-sample.info`.
 
 ## Capture throughput benchmark
 

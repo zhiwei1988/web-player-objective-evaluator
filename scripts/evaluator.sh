@@ -36,15 +36,22 @@ SUBMISSION_ZIP="$(readlink -f "$2" 2>/dev/null || echo "$2")"
 source "${SCRIPT_DIR}/env.sh"
 # shellcheck source=_contestant_lifecycle.sh
 source "${SCRIPT_DIR}/_contestant_lifecycle.sh"
+# shellcheck source=_result_info_lifecycle.sh
+source "${SCRIPT_DIR}/_result_info_lifecycle.sh"
 
 RUN_DIR=""
 LOG_FILE=""
 SCORE_FILE=""
 REPORT_FILE=""
+RESULT_INFO_FILE=""
 FAILURE_REASON=""
 PROFILES_TO_RUN=()
 declare -A PROFILE_REASON=()
 declare -A METRICS_PATH=()
+
+# Wall-clock start in ns; result.info's |runtime| is derived from this in
+# scripts/_result_info_lifecycle.sh::write_result_info.
+RUN_START_NS="$(date +%s%N)"
 
 # fd-3 holds the original stdout for the final score JSON once logging is
 # redirected to the run log.
@@ -93,6 +100,13 @@ cleanup() {
     if [[ -n "${RUN_DIR:-}" && -d "${RUN_DIR}" && ! -f "${SCORE_FILE}" ]]; then
         write_failure_score "${FAILURE_REASON:-${HOST_FAILURE_REASON:-contestant_frontend_unavailable}}"
     fi
+    if [[ -n "${SCORE_FILE:-}" && -f "${SCORE_FILE}" && ! -f "${RESULT_INFO_FILE}" ]]; then
+        # Render+publish result.info from whatever score landed (normal or failure).
+        if ! write_result_info; then
+            log "evaluator failure: result.info render/publish failed during cleanup"
+            (( rc == 0 )) && rc=1
+        fi
+    fi
     if [[ -n "${SCORE_FILE:-}" && -f "${SCORE_FILE}" ]]; then
         cat "${SCORE_FILE}" >&3 || true
     fi
@@ -105,6 +119,7 @@ clx_prepare_run_dir "${TEAM_ID}"
 LOG_FILE="${RUN_DIR}/evaluator.log"
 SCORE_FILE="${RUN_DIR}/score.json"
 REPORT_FILE="${RUN_DIR}/report.html"
+RESULT_INFO_FILE="${RUN_DIR}/result.info"
 
 # Tee logs to the run log, but preserve stdout for the final score JSON.
 exec > >(tee -a "${LOG_FILE}" >&2) 2>&1
@@ -226,5 +241,13 @@ done
 
 log "score written to ${SCORE_FILE}"
 log "report written to ${REPORT_FILE}"
+
+# Render + publish result.info from the normal-completion score. The cleanup
+# trap also covers failure paths via the same helper.
+if ! write_result_info 0; then
+    log "evaluator failure: result.info render/publish failed after normal scoring"
+    exit 1
+fi
+log "result.info written to ${RESULT_INFO_FILE}"
 
 # Trap emits score.json to original stdout on exit.

@@ -1,0 +1,16 @@
+|result|0 
+|score|0
+|runtime|0
+|info|Wrong Answer on Test case 1
+|debug|C++
+Case1 : ProcessCase
+Case1 : SolveCase
+Case1 : JudgeCase
+Case1 : AP功率数量异常
+
+---------------------以上字段说明（输出的result.info文件没有下面内容,使用时请删除以下内容）---------------------
+result 0 成功  1失败
+score 执行结果分数double
+runtime 执行时长毫秒
+info  给用户展示运行信息
+debug 出题者看的运行信息
