@@ -108,14 +108,16 @@ Per run, under `results/<team_id>_<timestamp>/`:
 
 Additionally, the evaluator publishes a byte-identical `result.info` to
 `$(dirname "<submission_zip>")/result.info` — the contest platform reads
-`result.info` from the directory the submission zip lives in, NOT from the
-internal staging dir `submissions/<team_id>/`. The published file is
-intentionally a lossy projection of `score.json`: its `|info|` block is
-contestant-visible (total + five item scores: 2K correctness, 2K FPS, 4K
-correctness, 4K FPS, CPU); its `|debug|` block carries organizer-facing
-diagnostics. Format spec is in `openspec/specs/evaluator/spec.md`
-(Requirement: Contest Platform Result Info); sample is at
-`reference/result-sample.info`.
+`result.info` from the directory the submission zip lives in. The evaluator
+also extracts the submission zip into that same directory and invokes
+`start.sh` from there. The caller should provide one isolated directory per
+submission zip because archive entries may overwrite files in that directory.
+The published file is intentionally a lossy projection of `score.json`: its
+`|info|` block is contestant-visible (total + five item scores: 2K correctness,
+2K FPS, 4K correctness, 4K FPS, CPU); its `|debug|` block carries
+organizer-facing diagnostics. Format spec is in
+`openspec/specs/evaluator/spec.md` (Requirement: Contest Platform Result Info);
+sample is at `reference/result-sample.info`.
 
 ## Capture throughput benchmark
 
@@ -154,7 +156,6 @@ to use `measured_fps`; benchmark output is audit/tuning data only.
 ├── third_party/install/                                        # build output (git-ignored)
 ├── streams/h265_{2560_1440,3840_2160}.mp4                      # generated (git-ignored)
 ├── reference/{2k,4k}/frame_NNNNN.png                           # generated (git-ignored)
-├── submissions/<team_id>/                                      # per-run staging (git-ignored)
 ├── results/<team_id>_<timestamp>/                              # per-run artifacts (git-ignored)
 └── test_submissions/                                           # bundled self-test fixtures
     ├── src/<case>/                                             # source for build_test_zips.sh

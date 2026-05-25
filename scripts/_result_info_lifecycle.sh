@@ -10,9 +10,7 @@
 #   SCORE_FILE        - path to score.json under RUN_DIR
 #   RESULT_INFO_FILE  - path to result.info under RUN_DIR
 #   SUBMISSION_ZIP    - absolute path of the submission zip (publication
-#                       target derives from dirname of this path; the
-#                       internal staging dir submissions/<team_id>/ is
-#                       NOT the publication target)
+#                       target derives from dirname of this path)
 #   RUN_START_NS      - wall-clock nanoseconds captured at evaluator start
 #                       (date +%s%N), used to compute |runtime| milliseconds
 
@@ -81,9 +79,8 @@ write_result_info() {
         return 1
     fi
 
-    # Publish to the upload directory next to the submission zip. The
-    # internal staging dir submissions/<team_id>/ is NOT the publication
-    # target — by spec, the platform reads <dirname submission_zip>/.
+    # Publish to the upload directory next to the submission zip; by spec,
+    # the platform reads <dirname submission_zip>/.
     local dest_dir dest
     dest_dir="$(dirname "${SUBMISSION_ZIP}")"
     if [[ -n "${dest_dir}" && -d "${dest_dir}" ]]; then

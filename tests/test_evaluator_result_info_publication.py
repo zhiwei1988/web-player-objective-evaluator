@@ -6,7 +6,7 @@ synthetic submission-zip parent directory. The contract is:
 
 - audit copy lands at ${RUN_DIR}/result.info
 - contestant-platform copy lands at $(dirname "${SUBMISSION_ZIP}")/result.info
-- the internal staging dir submissions/<team_id>/ is NOT a publication target
+- a legacy submissions/<team_id>/ directory is NOT a publication target
 
 Heavy pipeline pieces (mediamtx, ffmpeg, Chromium) are intentionally out of
 scope; this test only proves the publication contract.
@@ -108,7 +108,7 @@ def _drive_write_result_info(
     """Stage RUN_DIR + submission zip parent + score.json, then drive
     write_result_info via a small bash harness that sources the helper.
 
-    Returns (run_dir, submission_dir, submissions_staging_dir, completed_process).
+    Returns (run_dir, submission_dir, legacy_submissions_dir, completed_process).
     """
     run_dir = tmp_path / "results" / f"{team_id}_20260522_120000"
     run_dir.mkdir(parents=True)
@@ -119,8 +119,8 @@ def _drive_write_result_info(
     submission_zip = uploads_dir / f"{team_id}.zip"
     submission_zip.write_text("not a real zip")
 
-    # The contract forbids publishing into submissions/<team_id>/; the test
-    # creates that directory so we can later confirm it was NOT written to.
+    # The contract forbids publishing into legacy submissions/<team_id>/; the
+    # test creates that directory so we can later confirm it was NOT written to.
     submissions_dir = tmp_path / "submissions" / team_id
     submissions_dir.mkdir(parents=True)
 
@@ -164,7 +164,7 @@ def _drive_write_result_info(
 
 # ---------------------------------------------------------------------------
 # Successful run: result.info is published to dirname(submission_zip), NOT
-# to submissions/<team_id>/.
+# to legacy submissions/<team_id>/.
 # ---------------------------------------------------------------------------
 
 def test_successful_run_publishes_result_info_next_to_submission_zip(tmp_path):
@@ -184,8 +184,7 @@ def test_successful_run_publishes_result_info_next_to_submission_zip(tmp_path):
     assert audit.exists(), "audit copy must be written under RUN_DIR"
     assert published.exists(), "must be published next to the submission zip"
     assert not forbidden.exists(), (
-        "publication target must NOT be submissions/<team_id>/result.info — "
-        "submissions/ is internal staging only"
+        "publication target must NOT be submissions/<team_id>/result.info"
     )
 
     assert audit.read_bytes() == published.read_bytes(), (
@@ -324,8 +323,8 @@ def test_missing_submission_zip_parent_returns_failure(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Static guards: evaluator.sh must source the helper and never target
-# submissions/<team_id>/ as the publication path.
+# Static guards: evaluator.sh must source the helper and never target the
+# legacy submissions/<team_id>/ path for result.info publication.
 # ---------------------------------------------------------------------------
 
 def test_evaluator_sh_sources_the_result_info_helper():
@@ -333,12 +332,11 @@ def test_evaluator_sh_sources_the_result_info_helper():
     assert "_result_info_lifecycle.sh" in text
 
 
-def test_evaluator_sh_never_publishes_into_submissions_staging():
+def test_evaluator_sh_never_publishes_into_legacy_submissions_dir():
     text = (ROOT / "scripts" / "evaluator.sh").read_text()
     forbidden = "submissions/${TEAM_ID}/result.info"
     assert forbidden not in text, (
-        "submissions/<team_id>/ is internal staging — result.info must "
-        "publish to $(dirname \"$SUBMISSION_ZIP\")/result.info instead."
+        "result.info must publish to $(dirname \"$SUBMISSION_ZIP\")/result.info."
     )
 
 

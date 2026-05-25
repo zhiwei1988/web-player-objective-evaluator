@@ -8,17 +8,19 @@ Host-side automated scorer for the 30-point objective portion of the web plugin-
 
 ### Requirement: Workspace Layout
 
-The evaluator's working tree IS the repository root (no `evaluator/` subdirectory). It SHALL contain at minimum: under `scripts/` — `setup.sh`, `build.sh`, `deploy.sh`, `test.sh`, `evaluator.sh`, `prepare_streams.sh`, `start_rtsp.sh`, `health_check.sh`, `build_test_zips.sh`, `env.sh`, `teardown.sh`, `_contestant_lifecycle.sh`; at the root — `runner.py`, `analyzer.py`, `scorer.py`, `report.py`, `requirements.txt`; in `lib/` — `watermark.py` and `profiles.py`; in `rtsp_server/` — `mediamtx.yml`; plus `third_party/` (containing git submodules and, after `scripts/build.sh`, an `install/` prefix), `streams/`, `reference/2k/`, `reference/4k/`, `submissions/`, `results/`, `test_submissions/`. There SHALL NOT exist any of `scripts/evaluator-host.sh`, `scripts/evaluator-local.sh`, `scripts/package.sh`, `Dockerfile`, `.dockerignore`, `.playwright/`, or `dist/`. The evaluator main body (`scripts/evaluator.sh` + `runner.py` + `analyzer.py` + `scorer.py` + `report.py`) runs natively on the build host; `scripts/evaluator.sh` is the single operator-facing entry. Evaluation host = build host; there is no separate "target host" workflow.
+The evaluator's working tree IS the repository root (no `evaluator/` subdirectory). It SHALL contain at minimum: under `scripts/` — `setup.sh`, `build.sh`, `deploy.sh`, `test.sh`, `evaluator.sh`, `prepare_streams.sh`, `start_rtsp.sh`, `health_check.sh`, `build_test_zips.sh`, `env.sh`, `teardown.sh`, `_contestant_lifecycle.sh`; at the root — `runner.py`, `analyzer.py`, `scorer.py`, `report.py`, `requirements.txt`; in `lib/` — `watermark.py` and `profiles.py`; in `rtsp_server/` — `mediamtx.yml`; plus `third_party/` (containing git submodules and, after `scripts/build.sh`, an `install/` prefix), `streams/`, `reference/2k/`, `reference/4k/`, `results/`, `test_submissions/`. There SHALL NOT exist any of `scripts/evaluator-host.sh`, `scripts/evaluator-local.sh`, `scripts/package.sh`, `Dockerfile`, `.dockerignore`, `.playwright/`, or `dist/`. The evaluator main body (`scripts/evaluator.sh` + `runner.py` + `analyzer.py` + `scorer.py` + `report.py`) runs natively on the build host; `scripts/evaluator.sh` is the single operator-facing entry. Evaluation host = build host; there is no separate "target host" workflow.
 
 #### Scenario: Workspace exists after setup
 
 - **WHEN** an organizer clones the repository and runs the documented setup steps
 - **THEN** every path listed above exists, the shell scripts are executable, `lib/profiles.py` exposes a `PROFILES` mapping with keys `"2k"` and `"4k"`, and `./scripts/evaluator.sh` (invoked with too few arguments) prints a usage message naming `<team_id>` and `<submission_zip>`
 
-#### Scenario: Submissions and results are isolated per run
+#### Scenario: Submission workspace is the zip directory and results are isolated per run
 
-- **WHEN** the evaluator runs for team `T` at timestamp `TS`
-- **THEN** all submission files for that run live under `submissions/T/` and all artifacts live under `results/T_TS/`, with no cross-contamination from prior runs
+- **WHEN** the evaluator runs for team `T` at timestamp `TS` with submission zip `/uploads/T/submission.zip`
+- **THEN** extracted submission files for that run live under `/uploads/T/`
+- **THEN** all evaluator artifacts live under `results/T_TS/`
+- **THEN** the evaluator does not create or require `submissions/T/` as a staging directory
 
 #### Scenario: Legacy docker / bundle artifacts absent
 
@@ -70,7 +72,7 @@ The evaluator's working tree IS the repository root (no `evaluator/` subdirector
 
 ### Requirement: Contestant Runtime Contract
 
-Each contestant submission zip SHALL, after extraction into `submissions/<team_id>/`, provide an executable `start.sh` that launches whatever processes the submission needs; it MAY provide a `stop.sh` for cleanup. The evaluator SHALL export `RTSP_SERVER_HOST=127.0.0.1`, `RTSP_SERVER_PORT=554`, and `FRONTEND_PORT=8080` before invoking `start.sh`. Internal contestant processes (relay backends, decode workers, etc.) MAY bind any other local port; the evaluator neither prescribes nor cleans those — the contestant's process group is SIGKILLed as a whole at cleanup. The frontend SHALL expose route `/play` accepting `profile` (`2k` or `4k`) and `autoplay=1`, render the video into `[data-testid="player-video"]` at an actual rendered size of at least `1280x720` with proportional (uncropped) display, set `window.__PLAYER_READY__ = true` after the first frame is rendered, and assign a human-readable string to `window.__PLAYER_ERROR__` on playback failure. The RTSP source URLs that the contestant SHALL pull from are fixed: `rtsp://127.0.0.1:554/test/h265_2560_1440` for `profile=2k` and `rtsp://127.0.0.1:554/test/h265_3840_2160` for `profile=4k`.
+Each contestant submission zip SHALL, after extraction into `dirname <submission_zip>`, provide an executable `start.sh` that launches whatever processes the submission needs; it MAY provide a `stop.sh` for cleanup. The evaluator SHALL export `RTSP_SERVER_HOST=127.0.0.1`, `RTSP_SERVER_PORT=554`, and `FRONTEND_PORT=8080` before invoking `start.sh`. Internal contestant processes (relay backends, decode workers, etc.) MAY bind any other local port; the evaluator neither prescribes nor cleans those — the contestant's process group is SIGKILLed as a whole at cleanup. The frontend SHALL expose route `/play` accepting `profile` (`2k` or `4k`) and `autoplay=1`, render the video into `[data-testid="player-video"]` at an actual rendered size of at least `1280x720` with proportional (uncropped) display, set `window.__PLAYER_READY__ = true` after the first frame is rendered, and assign a human-readable string to `window.__PLAYER_ERROR__` on playback failure. The RTSP source URLs that the contestant SHALL pull from are fixed: `rtsp://127.0.0.1:554/test/h265_2560_1440` for `profile=2k` and `rtsp://127.0.0.1:554/test/h265_3840_2160` for `profile=4k`.
 
 The canonical evaluation host is Ubuntu 24.04 with Google Chrome (pinned version recorded in every `score.json` / `report.html` as `chromium_version`). The runtime contract is the same for both profiles — `[data-testid="player-video"]` with the readiness signals above — and the evaluator does NOT prescribe a rendering strategy. Whether to use `<video>`, `<canvas>` with WebCodecs, a WASM decoder, or any other approach is the contestant's choice; the evaluator only screenshots the element.
 
@@ -96,14 +98,15 @@ The canonical evaluation host is Ubuntu 24.04 with Google Chrome (pinned version
 
 ### Requirement: Evaluator Entry Script
 
-`scripts/evaluator.sh <team_id> <submission_zip>` SHALL be the single operator-facing entry for evaluating a contestant submission. The script SHALL execute, in order: acquire `flock -n /var/tmp/evaluator.lock` (exit `75 / EX_TEMPFAIL` if already held, printing the holding PID; MUST NOT block-wait or queue); compute `ts=$(date +%Y%m%d_%H%M%S)`; create `results/<team_id>_<ts>/`; precheck that TCP port `8080` is free (the script MUST NOT precheck `554` because it starts MediaMTX itself per run via `scripts/start_rtsp.sh`, reusing any already-bound instance); extract the submission zip into `submissions/<team_id>/`, lifting a single top-level directory if present; `chmod +x` `start.sh` and any present `stop.sh`; export `RTSP_SERVER_HOST=127.0.0.1`, `RTSP_SERVER_PORT=554`, `FRONTEND_PORT=8080`; invoke `start.sh` via `setsid` and record the process-group id; poll `curl -fsS 'http://127.0.0.1:8080/play?profile=2k&autoplay=1'` for up to 60 seconds; on success, drive the capture / analyze / score pipeline (per `Playwright Capture Runner`, `Frame Analysis`, `Scoring` Requirements) against each profile in `lib/profiles.py::PROFILES`; on completion, invoke contestant `stop.sh` if present (timeout 10s), `kill -- -<pgid>` the contestant process group, free port `8080` as belt-and-braces, tear down MediaMTX, release the flock. A `trap cleanup EXIT INT TERM` MUST be installed before the contestant `start.sh` is invoked. The script SHALL print the contents of `score.json` to stdout on completion. There SHALL NOT be any separate `scripts/evaluator-host.sh` or `scripts/evaluator-local.sh` wrapper; legacy filenames MUST NOT exist in the workspace.
+`scripts/evaluator.sh <team_id> <submission_zip>` SHALL be the single operator-facing entry for evaluating a contestant submission. The script SHALL execute, in order: acquire `flock -n /var/tmp/evaluator.lock` (exit `75 / EX_TEMPFAIL` if already held, printing the holding PID; MUST NOT block-wait or queue); compute `ts=$(date +%Y%m%d_%H%M%S)`; create `results/<team_id>_<ts>/`; precheck that TCP port `8080` is free (the script MUST NOT precheck `554` because it starts MediaMTX itself per run via `scripts/start_rtsp.sh`, reusing any already-bound instance); extract the submission zip into `dirname <submission_zip>`, lifting a single top-level directory if present; grant executable permission to all files under `dirname <submission_zip>` after extraction and lifting; export `RTSP_SERVER_HOST=127.0.0.1`, `RTSP_SERVER_PORT=554`, `FRONTEND_PORT=8080`; invoke `start.sh` from `dirname <submission_zip>` via `setsid` and record the process-group id; poll `curl -fsS 'http://127.0.0.1:8080/play?profile=2k&autoplay=1'` for up to 60 seconds; on success, drive the capture / analyze / score pipeline (per `Playwright Capture Runner`, `Frame Analysis`, `Scoring` Requirements) against each profile in `lib/profiles.py::PROFILES`; on completion, invoke contestant `stop.sh` if present (timeout 10s), `kill -- -<pgid>` the contestant process group, free port `8080` as belt-and-braces, tear down MediaMTX, release the flock. A `trap cleanup EXIT INT TERM` MUST be installed before the contestant `start.sh` is invoked. The script SHALL print the contents of `score.json` to stdout on completion. There SHALL NOT be any separate `scripts/evaluator-host.sh` or `scripts/evaluator-local.sh` wrapper; legacy filenames MUST NOT exist in the workspace.
 
 Exit codes: `0` on a normal scoring run (regardless of contestant score), `2` when the contestant frontend never becomes ready (see Requirement `Failure Score on Contestant Unavailable`), `75 / EX_TEMPFAIL` on lock contention, `1` on any other startup failure (missing submission zip, port `8080` occupied, missing `start.sh`, etc.).
 
 #### Scenario: Successful end-to-end run
 
-- **WHEN** an organizer runs `scripts/evaluator.sh team_ref reference.zip` on a build-and-deploy-ready host with port `8080` free and a contestant zip that satisfies the contestant runtime contract
+- **WHEN** an organizer runs `scripts/evaluator.sh team_ref /uploads/team_ref/reference.zip` on a build-and-deploy-ready host with port `8080` free and a contestant zip that satisfies the contestant runtime contract
 - **THEN** the script exits `0`, `results/team_ref_<ts>/score.json` exists and contains a valid `objective_total` with `max_score=30` and per-profile `2k` / `4k` / `cpu` blocks, port `8080` is free after the run, and the contents of `score.json` were printed to stdout
+- **THEN** the contestant `start.sh` was invoked from `/uploads/team_ref/`
 
 #### Scenario: Concurrent invocation refused
 
@@ -124,6 +127,11 @@ Exit codes: `0` on a normal scoring run (regardless of contestant score), `2` wh
 
 - **WHEN** any organizer or automated tool searches the repository for `scripts/evaluator-host.sh` or `scripts/evaluator-local.sh`
 - **THEN** neither file exists; `scripts/evaluator.sh` is the only entry under `scripts/` that accepts `<team_id> <submission_zip>` arguments
+
+#### Scenario: Extracted files are executable
+
+- **WHEN** a submission zip contains non-executable regular files, including `start.sh`, `stop.sh`, helper scripts, or binaries
+- **THEN** after extraction and any single-top-level-directory lifting, all files under `dirname <submission_zip>` have executable permission
 
 ### Requirement: Failure Score on Contestant Unavailable
 
@@ -479,7 +487,7 @@ Each run SHALL produce, under `results/<team_id>_<timestamp>/`: `2k_screenshots/
 
 ### Requirement: Contest Platform Result Info
 
-For every evaluator invocation that creates a run directory and produces `score.json`, the evaluator SHALL also produce a `result.info` file formatted after `reference/result-sample.info`. The evaluator SHALL write the audit copy to `results/<team_id>_<timestamp>/result.info` and SHALL copy the same bytes to `dirname <submission_zip>/result.info`. The evaluator SHALL NOT publish the platform-facing `result.info` under `submissions/<team_id>/`, because that directory is internal staging.
+For every evaluator invocation that creates a run directory and produces `score.json`, the evaluator SHALL also produce a `result.info` file formatted after `reference/result-sample.info`. The evaluator SHALL write the audit copy to `results/<team_id>_<timestamp>/result.info` and SHALL copy the same bytes to `dirname <submission_zip>/result.info`.
 
 `result.info` SHALL contain the fields `result`, `score`, `runtime`, `info`, and `debug` in that order:
 
@@ -507,7 +515,6 @@ Breakdown:
 - **WHEN** `scripts/evaluator.sh team_ref /uploads/team_ref.zip` completes a normal scoring run and `/uploads/` is writable
 - **THEN** `results/team_ref_<timestamp>/result.info` exists
 - **THEN** `/uploads/result.info` exists with identical contents
-- **THEN** `submissions/team_ref/result.info` is not required and is not the platform publication target
 - **THEN** the `result.info` `score` field equals `score.json.objective_total`
 - **THEN** the `info` block lists exactly 2K correctness, 2K FPS, 4K correctness, 4K FPS, and CPU item scores
 
@@ -603,7 +610,7 @@ The evaluator workspace SHALL provide five idempotent lifecycle scripts under `s
 - `scripts/setup.sh` — bootstrap the build host: install the apt toolchain (`build-essential`, `cmake`, `autoconf`, `automake`, `libtool`, `pkg-config`, `nasm`, `yasm`, `golang-go`, `python3-venv`, `lsof`, `unzip`, `libcap2-bin`), create the Python virtualenv at `.venv/` at the repo root, and run `git submodule update --init --recursive`.
 - `scripts/build.sh` — build every submodule into `third_party/install/` in dependency order (leptonica before tesseract, then libdmtx, x264, x265, ffmpeg, mediamtx), `pip install -r requirements.txt` into the venv, `playwright install chromium` at the Playwright-pinned revision, and apply `sudo setcap cap_net_bind_service=+ep` to `third_party/install/bin/mediamtx` so the host-native MediaMTX can bind port `554`. A `--clean` flag SHALL force a from-scratch rebuild. The setcap step SHALL fail loudly (non-zero exit, explicit error message) when sudo is unavailable or the kernel does not support file capabilities; it MUST NOT silently fall back.
 - `scripts/deploy.sh` — bring the host to a ready state for evaluation: invoke `scripts/prepare_streams.sh` if `streams/h265_*.mp4` or `reference/{2k,4k}/` are missing or older than `lib/watermark.py`. It SHALL NOT start MediaMTX or health-check RTSP — those are owned per-run by `scripts/evaluator.sh`. Operators who need RTSP up for ad-hoc `ffprobe` testing without invoking an evaluator run SHALL invoke `scripts/start_rtsp.sh` directly.
-- `scripts/test.sh` — execute the automated validation suite against the bundled reference and negative-case submissions and exit non-zero if any expected score / failure-reason fails to match. The script SHALL auto-invoke `scripts/deploy.sh` if RTSP is not already up, drive cases through `scripts/evaluator.sh`, and register `scripts/teardown.sh` on EXIT/INT/TERM. The script SHALL NOT accept a `--portable` flag; legacy bundle-comparison mode is removed.
+- `scripts/test.sh` — execute the automated validation suite against the bundled reference and negative-case submissions and exit non-zero if any expected score / failure-reason fails to match. The script SHALL auto-invoke `scripts/deploy.sh` if RTSP is not already up, copy each selected `test_submissions/*.zip` into a per-case isolated temporary upload directory before invoking `scripts/evaluator.sh`, drive cases through `scripts/evaluator.sh`, and register `scripts/teardown.sh` on EXIT/INT/TERM. The script SHALL NOT accept a `--portable` flag; legacy bundle-comparison mode is removed.
 - `scripts/teardown.sh` — opposite of `scripts/deploy.sh`: stop MediaMTX (via `rtsp_server/mediamtx.pid`, SIGTERM-then-SIGKILL) and free port `8080`. Does NOT touch any other port — internal contestant ports are the contestant's concern and are collected by `scripts/evaluator.sh`'s process-group kill.
 
 Each script SHALL be safe to re-run, SHALL refuse to silently use system-wide tools when its own outputs exist, and SHALL print a clear final status line ("ready", "failed: <reason>", etc.).
@@ -626,7 +633,7 @@ Each script SHALL be safe to re-run, SHALL refuse to silently use system-wide to
 #### Scenario: Automated regression test
 
 - **WHEN** an organizer runs `scripts/test.sh` after a successful `scripts/deploy.sh`
-- **THEN** it invokes `scripts/evaluator.sh` against each `test_submissions/*.zip`, compares each resulting `score.json` to the expected outcome (with `max_score=30` and `2k` / `4k` / `cpu` block keys), prints per-case PASS/FAIL, and exits non-zero if any case fails
+- **THEN** it evaluates each selected `test_submissions/*.zip` from a per-case isolated temporary upload directory, compares each resulting `score.json` to the expected outcome (with `max_score=30` and `2k` / `4k` / `cpu` block keys), prints per-case PASS/FAIL, and exits non-zero if any case fails
 
 #### Scenario: Self-contained test session
 

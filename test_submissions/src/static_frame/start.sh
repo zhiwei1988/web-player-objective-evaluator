@@ -8,9 +8,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FE_PORT="${FRONTEND_PORT:-8080}"
 
 # Grab one watermarked reference frame for each profile from the evaluator's
-# reference directory. The submission is staged at submissions/<id>/, so the
-# repo root (which holds reference/) is two directories up.
-REPO_ROOT="$(cd "${ROOT}/../.." && pwd)"
+# reference directory.
+REPO_ROOT="${EVALUATOR_REPO_ROOT:-$(cd "${ROOT}/../.." && pwd)}"
 mkdir -p "${ROOT}/web"
 while IFS=$'\t' read -r profile refdir; do
     cp "${REPO_ROOT}/${refdir}/frame_00100.png" "${ROOT}/web/${profile}.png"

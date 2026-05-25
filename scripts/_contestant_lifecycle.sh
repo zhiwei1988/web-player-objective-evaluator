@@ -56,13 +56,13 @@ clx_prepare_run_dir() {
     RUN_DIR="${ROOT_DIR}/results/${RESULTS_SUBDIR}"
     [[ ! -d "${RUN_DIR}" ]] || clx_die "results dir already exists (clock skew?): ${RUN_DIR}"
     mkdir -p "${RUN_DIR}"
-    STAGE_DIR="${ROOT_DIR}/submissions/${team_id}"
+    STAGE_DIR=""
 }
 
 clx_extract_submission() {
     local zip_path="$1"
     [[ -f "${zip_path}" ]] || clx_die "submission zip not found: ${zip_path}" 1
-    rm -rf "${STAGE_DIR}"; mkdir -p "${STAGE_DIR}"
+    STAGE_DIR="$(cd "$(dirname "${zip_path}")" && pwd)"
     unzip -qq "${zip_path}" -d "${STAGE_DIR}" || clx_die "unzip failed" 1
     # Lift single-top-dir layout if present.
     if [[ ! -f "${STAGE_DIR}/start.sh" ]]; then
@@ -74,8 +74,7 @@ clx_extract_submission() {
         fi
     fi
     [[ -f "${STAGE_DIR}/start.sh" ]] || clx_die_with_reason "contestant_frontend_unavailable" 2
-    chmod +x "${STAGE_DIR}/start.sh"
-    [[ -f "${STAGE_DIR}/stop.sh" ]] && chmod +x "${STAGE_DIR}/stop.sh"
+    chmod -R a+x "${STAGE_DIR}"
     return 0
 }
 

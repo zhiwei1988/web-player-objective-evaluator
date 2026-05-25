@@ -5,7 +5,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FE_PORT="${FRONTEND_PORT:-8080}"
-REPO_ROOT="$(cd "${ROOT}/../.." && pwd)"
+REPO_ROOT="${EVALUATOR_REPO_ROOT:-$(cd "${ROOT}/../.." && pwd)}"
 
 # Five frames per profile — cycled, never live-decoded. Profile names and
 # reference dirs come from lib/profiles.py.

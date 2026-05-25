@@ -103,7 +103,12 @@ run_case() {
     local team_id="selftest_${case_name}"
     local out_dir
     out_dir="$(mktemp -d)"
-    if ! "${SCRIPT_DIR}/evaluator.sh" "${team_id}" "${zip}" > "${out_dir}/stdout.json" 2> "${out_dir}/stderr.log"; then
+    local upload_dir upload_zip
+    upload_dir="${out_dir}/upload"
+    mkdir -p "${upload_dir}"
+    upload_zip="${upload_dir}/${case_name}.zip"
+    cp -f "${zip}" "${upload_zip}"
+    if ! EVALUATOR_REPO_ROOT="${ROOT_DIR}" "${SCRIPT_DIR}/evaluator.sh" "${team_id}" "${upload_zip}" > "${out_dir}/stdout.json" 2> "${out_dir}/stderr.log"; then
         : # Contestant failures can be legitimate expectations.
     fi
     local result_dir

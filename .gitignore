@@ -28,7 +28,7 @@ streams/*.mp4
 reference/h264/frame_*.png
 reference/h265/frame_*.png
 
-# Per-submission staging and results
+# Legacy staging leftovers and per-run results
 submissions/*/
 results/*/
 

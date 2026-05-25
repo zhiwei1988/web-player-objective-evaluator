@@ -16,8 +16,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Submission lives at submissions/<team_id>/; repo root is two dirs up.
-REPO_ROOT="$(cd "${ROOT}/../.." && pwd)"
+REPO_ROOT="${EVALUATOR_REPO_ROOT:-$(cd "${ROOT}/../.." && pwd)}"
 FE_PORT="${FRONTEND_PORT:-8080}"
 
 log() { printf '[ref-start] %s\n' "$*" >&2; }
@@ -27,7 +26,7 @@ mkdir -p "${WEB}"
 
 # Symlink the per-profile reference frame directories into the web root, so
 # the browser can fetch /2k/frame_NNNNN.png etc. directly.
-# PYTHONPATH because we're invoked from submissions/<id>/ (cwd != repo root).
+# PYTHONPATH because the submission workspace is not necessarily the repo root.
 while IFS=$'\t' read -r profile refdir; do
     src="${REPO_ROOT}/${refdir}"
     dst="${WEB}/${profile}"
