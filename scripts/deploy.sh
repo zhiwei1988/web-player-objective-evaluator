@@ -23,7 +23,7 @@ ensure_streams() {
     # Collect expected stream/reference shape from the profile registry. The
     # reference frame count catches old 25fps outputs after the source profile
     # changes to 20fps, even when mtimes alone look fresh.
-    mapfile -t expected_profiles < <(.venv/bin/python -c \
+    mapfile -t expected_profiles < <("${ROOT_DIR}/.venv/bin/python" -c \
         "from lib.profiles import PROFILES
 for s in PROFILES.values():
     print(f'{s.stream_file}\t{s.reference_dir}\t{int(round(s.fps * s.duration_s))}\t{s.fps}')")

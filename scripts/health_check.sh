@@ -16,14 +16,14 @@ if (( $# >= 1 )); then
     PROFILES_TO_CHECK=("$1")
     TIMEOUT="${2:-15}"
 else
-    mapfile -t PROFILES_TO_CHECK < <(.venv/bin/python -c \
+    mapfile -t PROFILES_TO_CHECK < <("${ROOT_DIR}/.venv/bin/python" -c \
         "from lib.profiles import PROFILES; print('\n'.join(sorted(PROFILES.keys())))")
     TIMEOUT=15
 fi
 
 failed=0
 for profile in "${PROFILES_TO_CHECK[@]}"; do
-    url="$(.venv/bin/python -c "from lib.profiles import rtsp_url; print(rtsp_url('${profile}'))")"
+    url="$("${ROOT_DIR}/.venv/bin/python" -c "from lib.profiles import rtsp_url; print(rtsp_url('${profile}'))")"
     if ffprobe -v error \
             -rtsp_transport tcp \
             -timeout "$(( TIMEOUT * 1000000 ))" \

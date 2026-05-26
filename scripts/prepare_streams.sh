@@ -33,13 +33,13 @@ log "removing legacy H.264 / H.265-by-codec assets if present"
 rm -rf streams/h264_watermarked.mp4 streams/h265_watermarked.mp4 reference/h264 reference/h265
 
 # Read PROFILES keys via python so the registry stays the single source.
-PROFILE_KEYS=$(.venv/bin/python -c "from lib.profiles import PROFILES; print(' '.join(sorted(PROFILES.keys())))")
+PROFILE_KEYS=$("${ROOT_DIR}/.venv/bin/python" -c "from lib.profiles import PROFILES; print(' '.join(sorted(PROFILES.keys())))")
 
 mkdir -p streams
 
 for profile in ${PROFILE_KEYS}; do
     # Pull per-profile fields into shell vars via a single python invocation.
-    eval "$(.venv/bin/python <<PY
+    eval "$("${ROOT_DIR}/.venv/bin/python" <<PY
 from lib.profiles import PROFILES
 s = PROFILES["${profile}"]
 print(f"PW={s.width}; PH={s.height}; PFPS={s.fps}; PBR='{s.bitrate}'; "
@@ -52,7 +52,7 @@ PY
     PBUFSIZE="$(( PBR_NUM * 2 ))M"
 
     log "generating profile=${profile} reference PNGs (${PW}x${PH}@${PFPS}, ${PDUR}s)"
-    .venv/bin/python -m lib.watermark \
+    "${ROOT_DIR}/.venv/bin/python" -m lib.watermark \
         --profile "${profile}" --out "${PREF}"
 
     log "encoding profile=${profile} MP4 (libx265 ${PBR}, GOP=${PGOP})"
@@ -82,7 +82,7 @@ PY
     total=$(( PFPS * PDUR ))
     for sample in 0 $((total / 2)) $((total - 1)); do
         printf -v png '%s/frame_%05d.png' "${PREF}" "${sample}"
-        got="$(.venv/bin/python -c "
+        got="$("${ROOT_DIR}/.venv/bin/python" -c "
 from pylibdmtx.pylibdmtx import decode
 from PIL import Image
 img = Image.open('${png}').convert('RGB')

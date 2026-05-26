@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import re
 from pathlib import Path
 
 
@@ -87,3 +88,13 @@ def test_env_allows_repo_imports_from_non_repo_cwd(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == ["2k", "4k"]
+
+
+def test_shell_entrypoints_use_absolute_venv_python() -> None:
+    for rel in [
+        "scripts/health_check.sh",
+        "scripts/prepare_streams.sh",
+        "scripts/deploy.sh",
+    ]:
+        text = (ROOT / rel).read_text()
+        assert re.search(r"(?<!/)\.venv/bin/python", text) is None, rel
