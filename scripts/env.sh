@@ -15,6 +15,7 @@ _install="${ROOT_DIR}/third_party/install"
 export PATH="${_install}/bin:${PATH}"
 export LD_LIBRARY_PATH="${_install}/lib:${LD_LIBRARY_PATH:-}"
 export PKG_CONFIG_PATH="${_install}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+export PYTHONPATH="${ROOT_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
 # tesseract needs to find its language data.
 export TESSDATA_PREFIX="${_install}/share/tessdata"
 

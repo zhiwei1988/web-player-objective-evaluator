@@ -65,3 +65,25 @@ def test_lifecycle_lock_name_matches_single_entrypoint() -> None:
 
     assert 'LOCK_FILE="/var/tmp/evaluator.lock"' in helper
     assert "evaluator-" + "host.lock" not in helper
+
+
+def test_env_allows_repo_imports_from_non_repo_cwd(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            (
+                f"source {str(ROOT / 'scripts/env.sh')!r} && "
+                "python -c 'from lib.profiles import PROFILES; "
+                "print(\"\\n\".join(sorted(PROFILES)))'"
+            ),
+        ],
+        cwd=tmp_path,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["2k", "4k"]
