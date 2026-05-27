@@ -31,9 +31,9 @@ ENV_SH = ROOT / "scripts" / "env.sh"
 def _full_score_json() -> dict:
     return {
         "max_score": 30,
-        "objective_total": 23.5,
+        "objective_total": 19.5,
         "cpu": {
-            "points": 7,
+            "points": 3,
             "mean_percent": 6.5,
             "sample_count": 25,
             "sample_window_ms": 25000,
@@ -193,9 +193,9 @@ def test_successful_run_publishes_result_info_next_to_submission_zip(tmp_path):
 
     content = audit.read_text()
     assert "|result|0" in content
-    assert "|score|23.5" in content
-    assert "Objective Score: 23.5 / 30" in content
-    assert "- CPU: 7 / 10" in content
+    assert "|score|19.5" in content
+    assert "Objective Score: 19.5 / 30" in content
+    assert "- CPU: 3 / 5" in content
 
 
 def test_runtime_is_recorded_as_nonnegative_integer_milliseconds(tmp_path):
@@ -241,7 +241,7 @@ def test_contestant_side_failure_publishes_with_result_zero(tmp_path):
     assert "|score|0" in content
     assert "Objective Score: 0 / 30" in content
     assert "- 2K Correctness: 0 / 5" in content
-    assert "- CPU: 0 / 10" in content
+    assert "- CPU: 0 / 5" in content
     # Raw reason stays out of the contestant-visible info block.
     assert "contestant_frontend_unavailable" not in content.split("|debug|")[0]
     # And appears in debug.

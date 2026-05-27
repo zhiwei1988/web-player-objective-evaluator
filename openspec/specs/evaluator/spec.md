@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Host-side automated scorer for the 30-point objective portion of the web plugin-free real-time media player challenge. Drives a known-good RTSP stream into each contestant submission, captures playback through Playwright Chromium, recognizes watermarked reference frames (DataMatrix + color blocks + SSIM), and produces a deterministic `score.json` plus internal `report.html` per run that organizers can defend against appeals. The score breakdown is 10 points per H.265 profile (5 correctness + 5 FPS, at 2K and 4K resolutions) plus a 10-point CPU sub-score derived from the contestant process tree's CPU usage sampled during the 2K capture round. Internal use only.
+Host-side automated scorer for the 30-point objective portion of the web plugin-free real-time media player challenge. Drives a known-good RTSP stream into each contestant submission, captures playback through Playwright Chromium, recognizes watermarked reference frames (DataMatrix + color blocks + SSIM), and produces a deterministic `score.json` plus internal `report.html` per run that organizers can defend against appeals. The score breakdown is 10 points for 2K (5 correctness + 5 FPS), 15 points for 4K (5 correctness + 10 FPS), plus a 5-point CPU sub-score derived from the contestant process tree's CPU usage sampled during the 2K capture round. Internal use only.
 
 ## Requirements
 
@@ -252,21 +252,21 @@ The repository SHALL include a focused benchmark or regression path that measure
 
 ### Requirement: Scoring
 
-`scorer.py` SHALL accept one or more `--metrics PROFILE=PATH` arguments (one per profile, e.g. `--metrics 2k=results/.../2k_metrics.json --metrics 4k=results/.../4k_metrics.json`), `--output`, and `--report`; score each profile independently for up to 10 points (5 correctness + 5 FPS); compute an additional 0-10 point CPU sub-score based on contestant CPU usage measured during the **2K profile** round (see the Contestant CPU Usage Measurement requirement); and produce a `score.json` containing one block per profile (keys `2k`, `4k`), a top-level `cpu` block, `objective_total`, and `max_score` of `30`.
+`scorer.py` SHALL accept one or more `--metrics PROFILE=PATH` arguments (one per profile, e.g. `--metrics 2k=results/.../2k_metrics.json --metrics 4k=results/.../4k_metrics.json`), `--output`, and `--report`; score 2K for up to 10 points (5 correctness + 5 FPS), score 4K for up to 15 points (5 correctness + 10 FPS), compute an additional 0-5 point CPU sub-score based on contestant CPU usage measured during the **2K profile** round (see the Contestant CPU Usage Measurement requirement); and produce a `score.json` containing one block per profile (keys `2k`, `4k`), a top-level `cpu` block, `objective_total`, and `max_score` of `30`.
 
 **Correctness** (rescaled): full 5 when `watermark_recognition_rate >= 0.95` AND `color_check_rate >= 0.95` AND `mean_ssim >= 0.90`; partial 2 when `watermark_recognition_rate >= 0.80` AND `mean_ssim >= 0.75`; otherwise 0. This applies to both 2K and 4K. 4K correctness SHALL remain scored even when 4K FPS is low.
 
 **2K FPS** (threshold based): expected FPS SHALL come from `PROFILES["2k"].fps` and default to `20`. Full 5 when `measured_fps / expected_fps >= FPS_FULL_RATIO_BY_PROFILE["2k"]`; partial 3 when `measured_fps / expected_fps >= FPS_PARTIAL_RATIO_BY_PROFILE["2k"]`; otherwise 0. The default values SHALL remain `FPS_FULL_RATIO_BY_PROFILE["2k"] = 0.85` and `FPS_PARTIAL_RATIO_BY_PROFILE["2k"] = 0.50`. The 2K block in `score.json` SHALL include `fps_full_threshold_used`, `fps_partial_threshold_used`, and `expected_fps`.
 
-**4K FPS** (linear absolute score): expected FPS SHALL come from `PROFILES["4k"].fps` and default to `20`. `score.json.4k.fps_points` SHALL equal `round(min(max(measured_fps, 0) / expected_fps, 1.0) * 5, 2)`. A 4K run measured at `4fps` against the default `20fps` expected value SHALL earn `1.0` FPS point. The 4K block in `score.json` SHALL include `fps_scoring_mode = "linear_absolute"`, `fps_linear_full_score = 5`, and `expected_fps`. 4K threshold-band fields MAY be omitted or set to `null`, but the report MUST make the linear formula clear.
+**4K FPS** (linear absolute score): expected FPS SHALL come from `PROFILES["4k"].fps` and default to `20`. `score.json.4k.fps_points` SHALL equal `round(min(max(measured_fps, 0) / expected_fps, 1.0) * 10, 2)`. A 4K run measured at `4fps` against the default `20fps` expected value SHALL earn `2.0` FPS points. The 4K block in `score.json` SHALL include `fps_scoring_mode = "linear_absolute"`, `fps_linear_full_score = 10`, and `expected_fps`. 4K threshold-band fields MAY be omitted or set to `null`, but the report MUST make the linear formula clear.
 
-**CPU** (gating on 2K): `scorer.score_cpu(mean_cpu_percent, measured_cpu_profile_fps, expected_cpu_profile_fps)` SHALL return an integer in `[0, 10]` together with a nullable `gate_reason` string, evaluated in this order:
+**CPU** (gating on 2K): `scorer.score_cpu(mean_cpu_percent, measured_cpu_profile_fps, expected_cpu_profile_fps)` SHALL return an integer in `[0, 5]` together with a nullable `gate_reason` string, evaluated in this order:
 
 1. Gate: if `measured_cpu_profile_fps / expected_cpu_profile_fps < CPU_GATE_FPS_RATIO` (default `0.65`), return `(0, "2k_fps_below_threshold")`. A submission that does not reach the minimum 2K playback throughput cannot earn any CPU points.
 2. If `mean_cpu_percent` is unavailable (analyzer omitted the field, or `capture_meta.json.cpu` was null), return `(0, "sampler_no_data")`.
-3. If `mean_cpu_percent <= CPU_FULL_THRESHOLD_PERCENT` (default `5.0`), return `(10, None)`.
+3. If `mean_cpu_percent <= CPU_FULL_THRESHOLD_PERCENT` (default `5.0`), return `(5, None)`.
 4. If `mean_cpu_percent > CPU_ZERO_THRESHOLD_PERCENT` (default `20.0`), return `(0, None)`.
-5. Otherwise return `(round((CPU_ZERO_THRESHOLD_PERCENT - mean_cpu_percent) / (CPU_ZERO_THRESHOLD_PERCENT - CPU_PARTIAL_START_PERCENT) * 10), None)`, clamped to `[0, 10]`. `CPU_PARTIAL_START_PERCENT` defaults to `6.0`.
+5. Otherwise return `(round((CPU_ZERO_THRESHOLD_PERCENT - mean_cpu_percent) / (CPU_ZERO_THRESHOLD_PERCENT - CPU_PARTIAL_START_PERCENT) * 5), None)`, clamped to `[0, 5]`. `CPU_PARTIAL_START_PERCENT` defaults to `6.0`.
 
 The CPU block SHALL include `measured_on_profile = "2k"`, `gate_profile = "2k"`, `expected_fps`, `measured_fps`, `thresholds_used`, `mean_percent`, `sample_count`, and the existing audit fields. The six tunables (`CPU_GATE_FPS_RATIO`, `CPU_FULL_THRESHOLD_PERCENT`, `CPU_PARTIAL_START_PERCENT`, `CPU_ZERO_THRESHOLD_PERCENT`, `CPU_MIN_SAMPLES`, `_cpu_sampler.DEFAULT_SAMPLE_HZ`) SHALL be exposed as named module-level constants and the actual values applied to each run SHALL be recorded under `score.json.cpu.thresholds_used` so a contestant audit can verify which thresholds produced the score.
 
@@ -307,12 +307,12 @@ When the 2K round fails entirely (no `2k_metrics.json` produced, or it lacks the
 #### Scenario: 4K FPS is scored linearly by absolute FPS
 
 - **WHEN** a submission's 4K round produces `measured_fps = 4.0` and `expected_fps = 20`
-- **THEN** `score.json.4k.fps_points = 1.0`, `score.json.4k.fps_scoring_mode = "linear_absolute"`, `score.json.4k.expected_fps = 20`, and `score.json.4k.fps_linear_full_score = 5`
+- **THEN** `score.json.4k.fps_points = 2.0`, `score.json.4k.fps_scoring_mode = "linear_absolute"`, `score.json.4k.expected_fps = 20`, and `score.json.4k.fps_linear_full_score = 10`
 
 #### Scenario: 4K FPS linear score is capped
 
 - **WHEN** a submission's 4K round produces `measured_fps >= 20`
-- **THEN** `score.json.4k.fps_points = 5.0` and the value does not exceed 5 even if measured FPS is higher than the source FPS
+- **THEN** `score.json.4k.fps_points = 10.0` and the value does not exceed 10 even if measured FPS is higher than the source FPS
 
 #### Scenario: Missing profile entry fails loudly
 
@@ -332,12 +332,12 @@ When the 2K round fails entirely (no `2k_metrics.json` produced, or it lacks the
 #### Scenario: CPU full marks at low usage
 
 - **WHEN** the 2K round produces `measured_fps / expected_fps >= CPU_GATE_FPS_RATIO` and `mean_cpu_percent <= 5.0`
-- **THEN** `cpu.points = 10`, `cpu.gated = false`, `cpu.gate_reason = null`, `cpu.measured_on_profile = "2k"`, and `cpu.thresholds_used` records every threshold that produced this outcome
+- **THEN** `cpu.points = 5`, `cpu.gated = false`, `cpu.gate_reason = null`, `cpu.measured_on_profile = "2k"`, and `cpu.thresholds_used` records every threshold that produced this outcome
 
 #### Scenario: CPU partial credit in the proportional band
 
 - **WHEN** the 2K round produces `measured_fps / expected_fps >= CPU_GATE_FPS_RATIO` and `mean_cpu_percent` falls within `(5.0, 20.0]`
-- **THEN** `cpu.points = round((20 - mean_cpu_percent) / 14 * 10)` clamped to `[0, 10]`, `cpu.gated = false`, and the formula matches the published score table at the integer percent breakpoints (`6->10`, `7->9`, `10->7`, `13->5`, `15->4`, `17->2`, `19->1`, `20->0`)
+- **THEN** `cpu.points = round((20 - mean_cpu_percent) / 14 * 5)` clamped to `[0, 5]`, `cpu.gated = false`, and the formula matches the published score table at the integer percent breakpoints (`6->5`, `7->5`, `10->4`, `13->2`, `15->2`, `17->1`, `19->0`, `20->0`)
 
 #### Scenario: CPU zero when usage exceeds the upper limit
 
@@ -501,8 +501,8 @@ Breakdown:
 - 2K Correctness: 5 / 5
 - 2K FPS: 5 / 5
 - 4K Correctness: 5 / 5
-- 4K FPS: 1.5 / 5
-- CPU: 7 / 10
+- 4K FPS: 3.0 / 10
+- CPU: 3 / 5
 |debug|...
 ```
 

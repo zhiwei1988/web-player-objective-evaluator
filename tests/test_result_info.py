@@ -53,7 +53,7 @@ def _full_4k_block(fps_points: float = 5) -> dict:
         "color_check_rate": 1.0,
         "mean_ssim": 0.93,
         "fps_scoring_mode": "linear_absolute",
-        "fps_linear_full_score": 5,
+        "fps_linear_full_score": 10,
         "fps_full_threshold_used": None,
         "fps_partial_threshold_used": None,
     }
@@ -202,29 +202,29 @@ def test_format_ends_with_newline():
 # ---------------------------------------------------------------------------
 
 def test_info_lists_all_five_scoring_items_normal_run():
-    score = _full_score(four_k_fps_points=1.5, objective_total=23.5, cpu_points=7)
+    score = _full_score(four_k_fps_points=1.5, objective_total=19.5, cpu_points=3)
     text = result_info.render(score=score, runtime_ms=42, run_dir="/r")
     fields = _parse_fields(text)
     info = fields["info"]
 
-    assert "Objective Score: 23.5 / 30" in info
+    assert "Objective Score: 19.5 / 30" in info
     assert "Breakdown:" in info
     assert "- 2K Correctness: 5 / 5" in info
     assert "- 2K FPS: 5 / 5" in info
     assert "- 4K Correctness: 5 / 5" in info
-    assert "- 4K FPS: 1.5 / 5" in info
-    assert "- CPU: 7 / 10" in info
+    assert "- 4K FPS: 1.5 / 10" in info
+    assert "- CPU: 3 / 5" in info
 
 
 def test_score_field_drops_trailing_zeroes():
-    score = _full_score(four_k_fps_points=1.5, objective_total=23.5)
+    score = _full_score(four_k_fps_points=1.5, objective_total=19.5)
     text = result_info.render(score=score, runtime_ms=1, run_dir="/r")
     fields = _parse_fields(text)
-    assert fields["score"] == "23.5"
+    assert fields["score"] == "19.5"
 
 
 def test_score_field_renders_integer_without_decimal():
-    score = _full_score(four_k_fps_points=5, objective_total=30)
+    score = _full_score(four_k_fps_points=10, objective_total=30)
     text = result_info.render(score=score, runtime_ms=1, run_dir="/r")
     fields = _parse_fields(text)
     assert fields["score"] == "30"
@@ -266,8 +266,8 @@ def test_contestant_failure_renders_zero_items_and_keeps_result_zero():
     assert "- 2K Correctness: 0 / 5" in info
     assert "- 2K FPS: 0 / 5" in info
     assert "- 4K Correctness: 0 / 5" in info
-    assert "- 4K FPS: 0 / 5" in info
-    assert "- CPU: 0 / 10" in info
+    assert "- 4K FPS: 0 / 10" in info
+    assert "- CPU: 0 / 5" in info
 
 
 def test_contestant_failure_keeps_raw_reason_out_of_info_block():
@@ -355,7 +355,7 @@ def test_debug_includes_cpu_gate_diagnostics_when_gated():
 # ---------------------------------------------------------------------------
 
 def test_cli_writes_result_info(tmp_path):
-    score = _full_score(four_k_fps_points=1.5, objective_total=23.5, cpu_points=7)
+    score = _full_score(four_k_fps_points=1.5, objective_total=19.5, cpu_points=3)
     score_path = tmp_path / "score.json"
     score_path.write_text(json.dumps(score))
     out_path = tmp_path / "result.info"
@@ -380,10 +380,10 @@ def test_cli_writes_result_info(tmp_path):
     content = out_path.read_text()
     fields = _parse_fields(content)
     assert fields["result"] == "0"
-    assert fields["score"] == "23.5"
+    assert fields["score"] == "19.5"
     assert fields["runtime"] == "64231"
-    assert "Objective Score: 23.5 / 30" in fields["info"]
-    assert "- CPU: 7 / 10" in fields["info"]
+    assert "Objective Score: 19.5 / 30" in fields["info"]
+    assert "- CPU: 3 / 5" in fields["info"]
 
 
 def test_cli_respects_explicit_result_code_one(tmp_path):

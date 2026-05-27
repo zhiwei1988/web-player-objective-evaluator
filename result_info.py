@@ -32,8 +32,8 @@ _SCORE_ITEMS: tuple[tuple[str, str | None, str | None, int], ...] = (
     ("2K Correctness", "2k", "correctness_points", 5),
     ("2K FPS",         "2k", "fps_points",         5),
     ("4K Correctness", "4k", "correctness_points", 5),
-    ("4K FPS",         "4k", "fps_points",         5),
-    ("CPU",            None, None,                10),
+    ("4K FPS",         "4k", "fps_points",         10),
+    ("CPU",            None, None,                 5),
 )
 
 

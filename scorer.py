@@ -1,7 +1,7 @@
 """Score the analyzer's metrics into the final 30-point objective total.
 
-5 correctness points + 5 FPS points per profile (two profiles = 20) plus a
-0–10 CPU sub-score sampled during the 2K profile capture window. Thresholds
+2K: 5 correctness + 5 FPS, 4K: 5 correctness + 10 FPS, plus a
+0–5 CPU sub-score sampled during the 2K profile capture window. Thresholds
 are duplicated from openspec/specs/evaluator/spec.md and design.md; bumping
 one without bumping the others is a regression.
 """
@@ -110,7 +110,7 @@ class ProfileScore:
             out["fps_partial_threshold_used"] = self.fps_partial_threshold_used
         if self.profile == "4k":
             out["fps_scoring_mode"] = "linear_absolute"
-            out["fps_linear_full_score"] = 5
+            out["fps_linear_full_score"] = 10
             out["fps_full_threshold_used"] = None
             out["fps_partial_threshold_used"] = None
         return out
@@ -146,7 +146,7 @@ def score_fps(measured: float, expected: float, profile: str) -> float:
     if expected <= 0:
         return 0.0
     if profile == "4k":
-        return round(min(max(measured, 0.0) / expected, 1.0) * 5.0, 2)
+        return round(min(max(measured, 0.0) / expected, 1.0) * 10.0, 2)
     full_ratio = FPS_FULL_RATIO_BY_PROFILE[profile]
     partial_ratio = FPS_PARTIAL_RATIO_BY_PROFILE[profile]
     ratio = measured / expected
@@ -166,15 +166,15 @@ def score_cpu(
     expected_fps: float | None = None,
     gate_fps_ratio: float = CPU_GATE_FPS_RATIO,
 ) -> tuple[int, str | None]:
-    """Map a measured CPU mean into 0-10 points with gating.
+    """Map a measured CPU mean into 0-5 points with gating.
 
     Evaluation order (first match wins):
         1. fps gate (sampled round didn't really play) -> 0, "<profile>_fps_below_threshold"
         2. mean missing/None → 0, "sampler_no_data"
-        3. mean ≤ CPU_FULL_THRESHOLD_PERCENT → 10, None
+        3. mean ≤ CPU_FULL_THRESHOLD_PERCENT → 5, None
         4. mean > CPU_ZERO_THRESHOLD_PERCENT  → 0, None
         5. partial band → linear decay anchored at PARTIAL_START / ZERO,
-                          rounded, clamped to [0, 10]
+                          rounded, clamped to [0, 5]
     """
     expected = expected_fps if expected_fps is not None else EXPECTED_FPS[CPU_PROFILE]
     fps_gate_reason = f"{CPU_PROFILE}_fps_below_threshold"
@@ -185,12 +185,12 @@ def score_cpu(
     if mean_cpu_percent is None:
         return 0, "sampler_no_data"
     if mean_cpu_percent <= CPU_FULL_THRESHOLD_PERCENT:
-        return 10, None
+        return 5, None
     if mean_cpu_percent > CPU_ZERO_THRESHOLD_PERCENT:
         return 0, None
     span = CPU_ZERO_THRESHOLD_PERCENT - CPU_PARTIAL_START_PERCENT
-    raw = (CPU_ZERO_THRESHOLD_PERCENT - mean_cpu_percent) / span * 10.0
-    return max(0, min(10, round(raw))), None
+    raw = (CPU_ZERO_THRESHOLD_PERCENT - mean_cpu_percent) / span * 5.0
+    return max(0, min(5, round(raw))), None
 
 
 def _thresholds_used(sample_hz: float | None) -> dict:
