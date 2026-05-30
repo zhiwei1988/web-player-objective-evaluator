@@ -226,13 +226,19 @@ def render_report(
             )
         else:
             decode_path_row = ""
+        fps_full_score = profile_score.get("fps_linear_full_score", 5)
+        fps_not_scored = (
+            " (not scored: level-0 gate failed)"
+            if gate and not gate.get("passed", True)
+            else ""
+        )
         return f'''
 <section>
   <h2>{label}</h2>
   <table>
     {decode_path_row}
     <tr><th>correctness</th><td>{profile_score["correctness_points"]}/5</td></tr>
-    <tr><th>fps</th><td>{profile_score["fps_points"]}/5</td></tr>
+    <tr><th>fps</th><td>{profile_score["fps_points"]}/{fps_full_score}{fps_not_scored}</td></tr>
     <tr><th>measured fps</th><td>{profile_score["measured_fps"]:.2f} (expected {expected_fps})</td></tr>
     {fps_band_row}
     <tr><th>watermark rate</th><td>{profile_score["watermark_recognition_rate"]:.3f}</td></tr>
@@ -264,6 +270,11 @@ def render_report(
             f'<span class="{gate_class}">gated: {html.escape(gate_reason)}</span>'
             if gated else '<span class="ok">scored</span>'
         )
+        cpu_heading = (
+            "not scored (0/5)"
+            if gate_reason == "gate_failed"
+            else f'{cpu.get("points", 0)}/5'
+        )
         # When the gate trips on sampled-profile FPS, surface the exact ratio
         # and cutoff so the contestant understands what throughput would have
         # unlocked CPU.
@@ -281,7 +292,7 @@ def render_report(
                 )
         return f'''
 <section>
-  <h2>CPU sub-score: {cpu.get("points", 0)}/10</h2>
+  <h2>CPU sub-score: {cpu_heading}</h2>
   {gate_callout}
   <table>
     <tr><th>state</th><td>{gated_label}</td></tr>
@@ -318,20 +329,19 @@ def render_report(
             else '<span class="fail">FAILED</span>'
         )
         return (
-            f'<tr><th>level-0 gate ({html.escape(str(gate.get("profile") or ""))})</th>'
-            f'<td>{state} — correctness {gate.get("correctness_points", 0)}/5, '
-            f'fps {gate.get("fps_points", 0)}/5</td></tr>'
+            '<tr><th>level-0 gate (decode correctness)</th>'
+            f'<td>{state} — 2K correctness {gate.get("2k_correctness_points", 0)}/5, '
+            f'4K correctness {gate.get("4k_correctness_points", 0)}/5</td></tr>'
         )
 
     gate_banner = ""
     if gate and not gate.get("passed", True):
         gate_banner = (
             '<div class="banner" style="background:#fdecea;border-left-color:#c0392b;">'
-            f'<strong>Level-0 gate failed.</strong> The '
-            f'{html.escape(str(gate.get("profile") or "2k"))} profile did not reach full '
-            f'marks (correctness {gate.get("correctness_points", 0)}/5, '
-            f'fps {gate.get("fps_points", 0)}/5). The remaining profiles were not '
-            f'captured and score 0; the CPU sub-score is voided.</div>'
+            '<strong>Level-0 gate failed.</strong> Both profiles were captured, but '
+            'level-1 FPS and CPU points are not scored. '
+            f'2K correctness {gate.get("2k_correctness_points", 0)}/5, '
+            f'4K correctness {gate.get("4k_correctness_points", 0)}/5.</div>'
         )
 
     profile_labels = {"2k": "2K profile", "4k": "4K profile"}
@@ -342,16 +352,21 @@ def render_report(
     for profile in sorted(PROFILES.keys()):
         label = profile_labels.get(profile, f"{profile} profile")
         subtotal = (score.get(profile) or {}).get("total", 0)
+        subtotal_max = 15 if profile == "4k" else 10
         summary_rows.append(
-            f'<tr><th>{html.escape(label)} subtotal</th><td>{subtotal}/10</td></tr>'
+            f'<tr><th>{html.escape(label)} subtotal</th><td>{subtotal}/{subtotal_max}</td></tr>'
         )
         artifact_links.extend([
             f'<a href="{profile}_metrics.json">{profile}_metrics.json</a>',
             f'<a href="{profile}_screenshots/">{profile}_screenshots/</a>',
         ])
+    cpu_summary_state = (
+        " (not scored: level-0 gate failed)"
+        if cpu.get("gate_reason") == "gate_failed"
+        else (" (gated)" if cpu.get("gated") else "")
+    )
     summary_rows.append(
-        f'<tr><th>CPU subtotal</th><td>{cpu.get("points", 0)}/10'
-        f"{' (gated)' if cpu.get('gated') else ''}</td></tr>"
+        f'<tr><th>CPU subtotal</th><td>{cpu.get("points", 0)}/5{cpu_summary_state}</td></tr>'
     )
     summary_rows.append(
         f'<tr><th>top-level reason</th><td>{html.escape(score.get("reason") or "")}</td></tr>'

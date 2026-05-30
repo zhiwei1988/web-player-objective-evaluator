@@ -1,14 +1,11 @@
-"""Tests for the level-0 gate: the 2K correctness AND fps sub-scores must both be
-at full marks before the remaining profiles and the CPU sub-score are scored.
+"""Tests for the decode-correctness level-0 gate.
 
-On gate failure the 2K block keeps its actual sub-scores, the 4K round is scored 0
-with reason "skipped_gate_failed", and the CPU block is gated to 0 with gate_reason
-"gate_failed". A decode-path violation on 2K keeps its more-specific CPU reason.
+Both profiles must earn full correctness before FPS and CPU points contribute
+to the objective total. FPS is still computed for audit when the gate fails.
 """
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -41,11 +38,12 @@ def _2k(measured_fps: float, *, wm: float = 1.0, color: float = 1.0,
     return block
 
 
-def _4k(measured_fps: float) -> dict:
+def _4k(measured_fps: float, *, wm: float = 1.0, color: float = 1.0,
+        ssim: float = 0.95) -> dict:
     return {
-        "watermark_recognition_rate": 1.0,
-        "color_check_rate": 1.0,
-        "mean_ssim": 0.95,
+        "watermark_recognition_rate": wm,
+        "color_check_rate": color,
+        "mean_ssim": ssim,
         "measured_fps": measured_fps,
     }
 
@@ -60,72 +58,144 @@ def _violation(metrics: dict) -> dict:
     return metrics
 
 
-# --- 1.1 gate_passed unit cases ---------------------------------------------
+# --- gate_passed unit cases -------------------------------------------------
 
-def test_gate_passed_when_corr_and_fps_full():
-    assert scorer.gate_passed(_2k(EXPECTED["2k"])) is True
-
-
-def test_gate_fails_when_correctness_below_full():
-    # watermark below the 0.95 full-mark band -> correctness != 5.
-    assert scorer.gate_passed(_2k(EXPECTED["2k"], wm=0.80)) is False
+def test_gate_passed_when_both_profiles_have_full_correctness():
+    assert scorer.gate_passed({
+        "2k": _2k(0.0),
+        "4k": _4k(0.0),
+    }) is True
 
 
-def test_gate_fails_when_fps_below_full():
-    # 0.84 ratio -> 2K fps falls to the partial band (3), not full.
-    assert scorer.gate_passed(_2k(EXPECTED["2k"] * 0.84)) is False
+def test_gate_fails_when_either_profile_correctness_is_below_full():
+    assert scorer.gate_passed({
+        "2k": _2k(EXPECTED["2k"], wm=0.80),
+        "4k": _4k(EXPECTED["4k"]),
+    }) is False
+    assert scorer.gate_passed({
+        "2k": _2k(EXPECTED["2k"]),
+        "4k": _4k(EXPECTED["4k"], wm=0.80),
+    }) is False
 
 
-def test_gate_fails_on_absent_or_empty_metrics():
-    assert scorer.gate_passed(None) is False
+def test_gate_fails_on_absent_or_empty_profile_metrics():
     assert scorer.gate_passed({}) is False
+    assert scorer.gate_passed({"2k": _2k(EXPECTED["2k"])}) is False
+    assert scorer.gate_passed({"2k": _2k(EXPECTED["2k"]), "4k": {}}) is False
+
+
+def test_gate_verdict_does_not_depend_on_fps():
+    assert scorer.gate_passed({
+        "2k": _2k(0.0),
+        "4k": _4k(0.0),
+    }) is True
 
 
 def test_gate_fails_on_decode_path_violation_even_when_rates_full():
-    assert scorer.gate_passed(_violation(_2k(EXPECTED["2k"]))) is False
+    assert scorer.gate_passed({
+        "2k": _2k(EXPECTED["2k"]),
+        "4k": _violation(_4k(EXPECTED["4k"])),
+    }) is False
 
 
-# --- 1.2 build_score on gate failure ----------------------------------------
+# --- build_score on gate pass ----------------------------------------------
 
-def test_build_score_gate_failure_keeps_2k_zeros_downstream():
-    # 2K: full correctness (5) but partial fps (3) -> gate fails, 2K total 8.
-    # Ratio 0.70 clears the CPU fps-gate (0.65) so the CPU block would otherwise
-    # have scored — proving the gate_failed override (not 2k_fps_below_threshold).
-    out = scorer.build_score(
-        {"2k": _2k(EXPECTED["2k"] * 0.70, mean_cpu=2.0), "4k": _4k(EXPECTED["4k"])},
-        chromium_version="t",
-    )
-    assert out["gate"]["passed"] is False
-    assert out["gate"]["profile"] == "2k"
-    assert out["2k"]["correctness_points"] == 5
-    assert out["2k"]["fps_points"] == 3
-    assert out["2k"]["total"] == 8
-    assert out["4k"]["total"] == 0
-    assert out["4k"]["reason"] == "skipped_gate_failed"
-    assert out["cpu"]["points"] == 0
-    assert out["cpu"]["gated"] is True
-    assert out["cpu"]["gate_reason"] == "gate_failed"
-    assert out["objective_total"] == 8
-
-
-# --- 1.3 build_score on gate pass -------------------------------------------
-
-def test_build_score_gate_pass_scores_downstream_normally():
+def test_build_score_gate_pass_scores_level_1_normally():
     out = scorer.build_score(
         {"2k": _2k(EXPECTED["2k"], mean_cpu=2.0), "4k": _4k(EXPECTED["4k"])},
         chromium_version="t",
     )
-    assert out["gate"]["passed"] is True
-    assert out["gate"]["correctness_points"] == 5
-    assert out["gate"]["fps_points"] == 5
+    assert out["gate"] == {
+        "passed": True,
+        "2k_correctness_points": 5,
+        "4k_correctness_points": 5,
+    }
+    assert out["2k"]["total"] == out["2k"]["correctness_points"] + out["2k"]["fps_points"]
+    assert out["4k"]["total"] == out["4k"]["correctness_points"] + out["4k"]["fps_points"]
+    assert out["cpu"]["points"] == 5
+    assert out["objective_total"] == out["2k"]["total"] + out["4k"]["total"] + out["cpu"]["points"]
+
+
+def test_build_score_perfect_run_scores_30():
+    out = scorer.build_score(
+        {"2k": _2k(EXPECTED["2k"], mean_cpu=2.0), "4k": _4k(EXPECTED["4k"])},
+        chromium_version="t",
+    )
     assert out["2k"]["total"] == 10
     assert out["4k"]["total"] == 15
     assert out["cpu"]["points"] == 5
-    assert out["objective_total"] == out["2k"]["total"] + out["4k"]["total"] + out["cpu"]["points"]
     assert out["objective_total"] == 30
 
 
-# --- 1.4 decode-path precedence over the gate -------------------------------
+def test_build_score_gate_pass_with_poor_performance_scores_correctness_10():
+    out = scorer.build_score(
+        {"2k": _2k(0.0, mean_cpu=2.0), "4k": _4k(0.0)},
+        chromium_version="t",
+    )
+    assert out["gate"]["passed"] is True
+    assert out["2k"]["fps_points"] == 0
+    assert out["4k"]["fps_points"] == 0.0
+    assert out["cpu"]["points"] == 0
+    assert out["cpu"]["gate_reason"] == "2k_fps_below_threshold"
+    assert out["objective_total"] == 10
+
+
+# --- build_score on gate failure -------------------------------------------
+
+def test_build_score_gate_failure_counts_correctness_only():
+    out = scorer.build_score(
+        {
+            "2k": _2k(EXPECTED["2k"], mean_cpu=2.0),
+            "4k": _4k(EXPECTED["4k"], wm=0.80),
+        },
+        chromium_version="t",
+    )
+    assert out["gate"] == {
+        "passed": False,
+        "2k_correctness_points": 5,
+        "4k_correctness_points": 2,
+    }
+    assert out["2k"]["fps_points"] == 5
+    assert out["4k"]["fps_points"] == 10.0
+    assert out["2k"]["total"] == 5
+    assert out["4k"]["total"] == 2
+    assert "reason" not in out["4k"]
+    assert out["cpu"]["points"] == 0
+    assert out["cpu"]["gated"] is True
+    assert out["cpu"]["gate_reason"] == "gate_failed"
+    assert out["objective_total"] == 7
+
+
+def test_build_score_fps_never_closes_correctness_gate():
+    out = scorer.build_score(
+        {
+            "2k": _2k(EXPECTED["2k"] * 0.70, mean_cpu=2.0),
+            "4k": _4k(EXPECTED["4k"] * 0.25),
+        },
+        chromium_version="t",
+    )
+    assert out["gate"]["passed"] is True
+    assert out["2k"]["total"] == 8
+    assert out["4k"]["total"] == 7.5
+    assert out["cpu"]["points"] == 5
+    assert out["objective_total"] == 20.5
+
+
+def test_build_score_4k_violation_fails_gate_and_scores_zero_for_4k():
+    out = scorer.build_score(
+        {
+            "2k": _2k(EXPECTED["2k"], mean_cpu=2.0),
+            "4k": _violation(_4k(EXPECTED["4k"])),
+        },
+        chromium_version="t",
+    )
+    assert out["gate"]["passed"] is False
+    assert out["gate"]["4k_correctness_points"] == 0
+    assert out["4k"]["correctness_points"] == 0
+    assert out["4k"]["fps_points"] == 0
+    assert out["4k"]["total"] == 0
+    assert out["objective_total"] == 5
+
 
 def test_build_score_2k_violation_keeps_decode_path_cpu_reason():
     out = scorer.build_score(
@@ -135,63 +205,38 @@ def test_build_score_2k_violation_keeps_decode_path_cpu_reason():
     assert out["gate"]["passed"] is False
     assert out["2k"]["correctness_points"] == 0
     assert out["2k"]["fps_points"] == 0
-    assert out["4k"]["total"] == 0
-    # decode_path_violation is more specific than gate_failed and wins.
+    assert out["4k"]["total"] == 5
     assert out["cpu"]["gate_reason"] == "decode_path_violation"
     assert out["cpu"]["points"] == 0
+    assert out["objective_total"] == 5
 
 
 def test_build_score_2k_below_cpu_floor_keeps_specific_cpu_reason():
-    # Ratio 0.60 < CPU_GATE_FPS_RATIO (0.65): gate fails AND the CPU fps floor is
-    # missed, so the more specific "2k_fps_below_threshold" wins over "gate_failed".
     out = scorer.build_score(
-        {"2k": _2k(EXPECTED["2k"] * 0.60, mean_cpu=2.0), "4k": _4k(EXPECTED["4k"])},
+        {
+            "2k": _2k(EXPECTED["2k"] * 0.60, wm=0.80, mean_cpu=2.0),
+            "4k": _4k(EXPECTED["4k"]),
+        },
         chromium_version="t",
     )
     assert out["gate"]["passed"] is False
-    assert out["4k"]["total"] == 0
     assert out["cpu"]["points"] == 0
     assert out["cpu"]["gate_reason"] == "2k_fps_below_threshold"
 
 
-# --- 1.5 short-circuit cannot change the score ------------------------------
+# --- execution short-circuit removal ---------------------------------------
 
-def test_build_score_zeros_4k_even_when_4k_metrics_supplied():
-    # Manual scorer run handed a perfectly good 4K alongside a non-perfect 2K:
-    # build_score must still zero 4K and CPU, identical to the orchestrated skip.
-    non_perfect_2k = _2k(EXPECTED["2k"], wm=0.80, mean_cpu=2.0)
-    out = scorer.build_score(
-        {"2k": non_perfect_2k, "4k": _4k(EXPECTED["4k"])},
-        chromium_version="t",
-    )
-    assert out["gate"]["passed"] is False
-    assert out["4k"]["total"] == 0
-    assert out["4k"]["reason"] == "skipped_gate_failed"
-    assert out["cpu"]["points"] == 0
-    assert out["objective_total"] == out["2k"]["total"]
-
-
-# --- 1.6 --gate-check CLI ----------------------------------------------------
-
-def _run_gate_check(tmp_path: Path, metrics: dict) -> subprocess.CompletedProcess:
-    metrics_file = tmp_path / "2k_metrics.json"
-    metrics_file.write_text(json.dumps(metrics))
-    out_file = tmp_path / "should_not_exist.json"
+def test_gate_check_cli_mode_is_removed():
     proc = subprocess.run(
-        [sys.executable, str(ROOT / "scorer.py"),
-         "--gate-check", f"2k={metrics_file}",
-         "--output", str(out_file)],
-        capture_output=True, text=True,
+        [sys.executable, str(ROOT / "scorer.py"), "--help"],
+        capture_output=True,
+        text=True,
+        check=True,
     )
-    assert not out_file.exists(), "--gate-check must not write an output file"
-    return proc
+    assert "--gate-check" not in proc.stdout
 
 
-def test_gate_check_cli_exit_zero_on_pass(tmp_path):
-    proc = _run_gate_check(tmp_path, _2k(EXPECTED["2k"]))
-    assert proc.returncode == 0
-
-
-def test_gate_check_cli_exit_nonzero_on_fail(tmp_path):
-    proc = _run_gate_check(tmp_path, _2k(EXPECTED["2k"] * 0.40))
-    assert proc.returncode != 0
+def test_evaluator_has_no_gate_driven_capture_short_circuit():
+    text = (ROOT / "scripts" / "evaluator.sh").read_text()
+    assert "--gate-check" not in text
+    assert "skipped_gate_failed" not in text

@@ -20,13 +20,10 @@ from lib.profiles import PROFILES
 EXPECTED_FPS: dict[str, float] = {name: float(spec.fps) for name, spec in PROFILES.items()}
 
 
-# Level-0 gate. The gate profile's correctness AND fps sub-scores must BOTH be at
-# full marks before the remaining profiles and the CPU sub-score are scored. The
-# gate reuses the published full-mark bands (score_correctness / score_fps) — there
-# is no separate gate threshold.
-GATE_PROFILE = "2k"
-GATE_SKIP_REASON = "skipped_gate_failed"
-"""per-profile `reason` set on downstream profiles skipped because the gate failed."""
+# Level-0 gate. Both profiles must earn full decode-correctness marks before
+# performance points contribute to the objective total. The gate reuses the
+# published score_correctness full-mark band; there is no separate threshold.
+GATE_PROFILES = ("2k", "4k")
 GATE_CPU_REASON = "gate_failed"
 """cpu `gate_reason` when the CPU sub-score is voided by a failed level-0 gate."""
 
@@ -169,28 +166,28 @@ def score_fps(measured: float, expected: float, profile: str) -> float:
     return 0
 
 
-def gate_passed(metrics: dict | None) -> bool:
-    """Level-0 gate verdict for the gate profile's metrics.
-
-    Returns True iff the gate profile earns FULL correctness AND FULL fps, reusing
-    the published full-mark bands (no separate thresholds). A decode-path
-    `violation` (which zeros the effective correctness/fps), or missing/incomplete
-    metrics, fails the gate — keeping this in lock-step with the effective 2K
-    sub-scores `build_score` emits.
-    """
+def _gate_correctness_points(metrics: dict | None) -> int:
     if not metrics:
-        return False
+        return 0
     forensics = metrics.get("decode_forensics") or {}
     if forensics.get("verdict") == VERDICT_VIOLATION:
-        return False
+        return 0
     rate_wm = float(metrics.get("watermark_recognition_rate") or 0.0)
     rate_color = float(metrics.get("color_check_rate") or 0.0)
     mean_ssim = float(metrics.get("mean_ssim") or 0.0)
-    measured_fps = float(metrics.get("measured_fps") or 0.0)
-    expected_fps = EXPECTED_FPS[GATE_PROFILE]
-    full_correctness = score_correctness(rate_wm, rate_color, mean_ssim) == 5
-    full_fps = score_fps(measured_fps, expected_fps, GATE_PROFILE) == 5
-    return full_correctness and full_fps
+    return score_correctness(rate_wm, rate_color, mean_ssim)
+
+
+def gate_passed(profile_metrics: dict[str, dict | None]) -> bool:
+    """Return whether both profiles earned full decode-correctness marks.
+
+    Missing/incomplete metrics and decode-path violations fail closed. FPS is
+    deliberately not inspected: it is a level-1 performance score.
+    """
+    return all(
+        _gate_correctness_points(profile_metrics.get(profile)) == 5
+        for profile in GATE_PROFILES
+    )
 
 
 CPU_PROFILE = next((name for name, spec in PROFILES.items() if spec.cpu_sampled), "2k")
@@ -389,34 +386,22 @@ def build_score(
 
     out["review_required"] = review_required
 
-    # Level-0 gate: the gate profile's correctness AND fps must both be full marks.
-    # Derived independently of which profiles were captured, so a contestant cannot
-    # bank downstream points when 2K is imperfect — and the orchestrator's
-    # capture short-circuit cannot change the emitted score.
-    gate_pass = gate_passed(profile_metrics.get(GATE_PROFILE))
-    gate_block = out.get(GATE_PROFILE) or {}
+    # Level-0 gate: both profiles must earn full decode correctness before the
+    # level-1 FPS and CPU sub-scores contribute to the objective total.
+    gate_pass = gate_passed(profile_metrics)
     out["gate"] = {
-        "profile": GATE_PROFILE,
         "passed": gate_pass,
-        "correctness_points": gate_block.get("correctness_points", 0),
-        "fps_points": gate_block.get("fps_points", 0),
+        "2k_correctness_points": (out.get("2k") or {}).get("correctness_points", 0),
+        "4k_correctness_points": (out.get("4k") or {}).get("correctness_points", 0),
     }
 
-    # On gate failure the downstream profiles are not scored: keep the gate
-    # profile's actual sub-scores, but zero every other profile (preserving any
-    # decode_path evidence) and tag it skipped.
+    # On gate failure level-1 points are audit-only: preserve fps_points while
+    # excluding them from each profile subtotal and from objective_total.
     if not gate_pass:
         for profile in PROFILES:
-            if profile == GATE_PROFILE:
-                continue
             block = out.get(profile)
-            if block is None:
-                out[profile] = {"reason": GATE_SKIP_REASON}
-            else:
-                block["correctness_points"] = 0
-                block["fps_points"] = 0
-                block["total"] = 0
-                block["reason"] = GATE_SKIP_REASON
+            if block:
+                block["total"] = block.get("correctness_points", 0)
 
     if per_round_reasons:
         for profile, reason in per_round_reasons.items():
@@ -468,10 +453,6 @@ def _cli() -> int:
     p.add_argument("--metrics", action="append", default=[],
                    metavar="PROFILE=PATH",
                    help="Per-profile metrics JSON (repeat once per profile).")
-    p.add_argument("--gate-check", metavar="PROFILE=PATH", default=None,
-                   help="Evaluate the level-0 gate on PROFILE's metrics and exit "
-                        "0 (passed) / 1 (failed) without writing any output. Used "
-                        "by scripts/evaluator.sh to short-circuit downstream capture.")
     p.add_argument("--output", type=Path, required=False)
     p.add_argument("--report", type=Path, required=False)
     p.add_argument("--install-prefix", type=Path, required=False,
@@ -485,18 +466,8 @@ def _cli() -> int:
                         "container wrapper to flag container_mode_unsupported).")
     args = p.parse_args()
 
-    if args.gate_check:
-        gate_paths = _parse_kv([args.gate_check], "--gate-check")
-        (profile, path_str), = gate_paths.items()
-        if profile not in PROFILES:
-            raise SystemExit(f"--gate-check: unknown profile {profile!r}; "
-                             f"valid: {sorted(PROFILES.keys())}")
-        path = Path(path_str)
-        metrics = json.loads(path.read_text()) if path.exists() else None
-        return 0 if gate_passed(metrics) else 1
-
     if args.output is None:
-        raise SystemExit("--output is required (unless using --gate-check)")
+        raise SystemExit("--output is required")
 
     metrics_paths = _parse_kv(args.metrics, "--metrics")
     profile_metrics: dict[str, dict | None] = {prof: None for prof in PROFILES}
