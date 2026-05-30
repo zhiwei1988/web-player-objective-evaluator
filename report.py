@@ -212,10 +212,25 @@ def render_report(
             )
         else:
             fps_band_row = ""
+        decode_path = profile_score.get("decode_path") or {}
+        dp_verdict = decode_path.get("verdict")
+        if dp_verdict:
+            dp_class = {"violation": "fail", "ok": "ok"}.get(dp_verdict, "warn")
+            evidence = decode_path.get("evidence") or []
+            ev_str = html.escape(", ".join(str(e) for e in evidence[:8]))
+            decode_path_row = (
+                f'<tr><th>decode path</th><td><span class="{dp_class}">'
+                f'{html.escape(str(dp_verdict))}</span>'
+                + (f" — {ev_str}" if ev_str else "")
+                + "</td></tr>"
+            )
+        else:
+            decode_path_row = ""
         return f'''
 <section>
   <h2>{label}</h2>
   <table>
+    {decode_path_row}
     <tr><th>correctness</th><td>{profile_score["correctness_points"]}/5</td></tr>
     <tr><th>fps</th><td>{profile_score["fps_points"]}/5</td></tr>
     <tr><th>measured fps</th><td>{profile_score["measured_fps"]:.2f} (expected {expected_fps})</td></tr>
@@ -321,6 +336,14 @@ def render_report(
         for profile in sorted(PROFILES.keys())
     )
 
+    review_banner = (
+        '<div class="banner" style="background:#fdecea;border-left-color:#c0392b;">'
+        "<strong>Review required.</strong> At least one profile's decode path is "
+        "inconclusive — forensics could not confirm in-browser H.265 decode. "
+        "Manual review advised before publishing this score.</div>"
+        if score.get("review_required") else ""
+    )
+
     body = f'''<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Evaluator report</title>
 <style>
@@ -341,6 +364,7 @@ code {{ background: #f5f5f7; padding: 1px 4px; border-radius: 3px; }}
 </style></head>
 <body>
 <div class="banner"><strong>Internal use only.</strong> This report is not exposed to contestants.</div>
+{review_banner}
 
 <h1>Evaluator report</h1>
 <p class="summary-big">{score.get("objective_total", 0)} / {score.get("max_score", 30)}</p>

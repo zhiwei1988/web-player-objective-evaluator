@@ -58,10 +58,13 @@ done
 # Expected outcome per case name. Read by the assertions below.
 # Each entry is comma-separated <assertion_kind>:<arg>; assertion kinds:
 #   total_ge       - objective_total must be >= <arg>
+#   total_le       - objective_total must be <= <arg>
 #   fps_2k_eq      - 2K profile FPS score must equal <arg>
 #   fps_4k_eq      - 4K profile FPS score must equal <arg>
 #   fps_4k_le      - 4K profile FPS score must be <= <arg>
 #   correctness_lt - at least one profile's correctness < <arg>
+#   verdict_2k     - 2K decode_path.verdict must equal <arg>
+#   verdict_4k     - 4K decode_path.verdict must equal <arg>
 #   reason_2k      - 2K round failure reason must contain <arg>
 #   reason_4k      - 4K round failure reason must contain <arg>
 #   reason_global  - top-level failure reason must contain <arg>
@@ -70,6 +73,7 @@ declare -A EXPECTED=(
     [static_frame]="fps_2k_eq:0,fps_4k_le:0.1"
     [iframe_only]="fps_2k_eq:0,fps_4k_le:0.1"
     [fake_overlay]="correctness_lt:5"
+    [transcode_to_h264]="verdict_2k:violation,verdict_4k:violation,total_le:0"
     [missing_start]="reason_global:contestant_frontend_unavailable"
     [never_ready]="reason_2k:startup timeout"
     [missing_testid]="reason_2k:missing data-testid"
@@ -139,6 +143,12 @@ def profile(p): return score.get(p, {}) if isinstance(score.get(p), dict) else {
 ok = False
 if kind == "total_ge":
     ok = total() >= float(arg)
+elif kind == "total_le":
+    ok = total() <= float(arg)
+elif kind == "verdict_2k":
+    ok = (profile("2k").get("decode_path") or {}).get("verdict") == arg
+elif kind == "verdict_4k":
+    ok = (profile("4k").get("decode_path") or {}).get("verdict") == arg
 elif kind == "fps_2k_eq":
     ok = profile("2k").get("fps_points") == int(arg)
 elif kind == "fps_4k_eq":
@@ -175,7 +185,7 @@ if (( ${#ONLY[@]} > 0 )); then
         [[ -n "${EXPECTED[${c}]:-}" ]] || die "--only ${c}: unknown case (no EXPECTED entry)"
     done
 else
-    cases=(reference static_frame iframe_only fake_overlay missing_start never_ready missing_testid)
+    cases=(reference static_frame iframe_only fake_overlay transcode_to_h264 missing_start never_ready missing_testid)
 fi
 
 for c in "${cases[@]}"; do run_case "${c}"; done

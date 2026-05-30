@@ -40,16 +40,17 @@ def test_score_fps_2k_just_below_partial_is_zero():
 
 # 1.2 — 4K linear absolute FPS scoring -----------------------------------------
 
-def test_score_fps_4k_linear_absolute_four_fps_gets_one_point():
-    assert scorer.score_fps(4.0, EXPECTED_FPS["4k"], "4k") == 1.0
+def test_score_fps_4k_linear_absolute_four_fps_gets_two_points():
+    # 4K FPS is scored out of 10 (full score): 4/20 * 10 = 2.0.
+    assert scorer.score_fps(4.0, EXPECTED_FPS["4k"], "4k") == 2.0
 
 
 def test_score_fps_4k_linear_absolute_caps_at_full_score():
-    assert scorer.score_fps(25.0, EXPECTED_FPS["4k"], "4k") == 5.0
+    assert scorer.score_fps(25.0, EXPECTED_FPS["4k"], "4k") == 10.0
 
 
 def test_score_fps_4k_linear_absolute_fractional_points():
-    assert scorer.score_fps(13.4, EXPECTED_FPS["4k"], "4k") == 3.35
+    assert scorer.score_fps(13.4, EXPECTED_FPS["4k"], "4k") == 6.7
 
 
 # 1.3 — unknown profile fails loudly -------------------------------------------
@@ -111,7 +112,7 @@ def test_build_score_emits_per_profile_audit_fields():
     assert out["2k"]["fps_full_threshold_used"] == scorer.FPS_FULL_RATIO_BY_PROFILE["2k"]
     assert out["2k"]["fps_partial_threshold_used"] == scorer.FPS_PARTIAL_RATIO_BY_PROFILE["2k"]
     assert out["2k"]["expected_fps"] == 20.0
-    assert out["4k"]["fps_points"] == 1.0
+    assert out["4k"]["fps_points"] == 2.0
     assert out["4k"]["fps_scoring_mode"] == "linear_absolute"
-    assert out["4k"]["fps_linear_full_score"] == 5
+    assert out["4k"]["fps_linear_full_score"] == 10
     assert out["4k"]["expected_fps"] == 20.0

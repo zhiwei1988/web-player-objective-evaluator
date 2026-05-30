@@ -1,0 +1,34 @@
+"""Tiny HTTP server for the transcode_to_h264 cheat fixture.
+
+Routes /play (any query string) to web/index.html, serves the transcoded
+<profile>.mp4 and everything else as static files from web/.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+from pathlib import Path
+from urllib.parse import urlparse
+
+
+class PlayHandler(SimpleHTTPRequestHandler):
+    def do_GET(self) -> None:
+        if urlparse(self.path).path == "/play":
+            self.path = "/index.html"
+        return super().do_GET()
+
+
+def main() -> int:
+    p = argparse.ArgumentParser()
+    p.add_argument("--port", type=int, default=8080)
+    p.add_argument("--root", type=Path, default=Path("web"))
+    args = p.parse_args()
+    os.chdir(args.root)
+    HTTPServer(("127.0.0.1", args.port), PlayHandler).serve_forever()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

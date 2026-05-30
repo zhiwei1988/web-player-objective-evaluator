@@ -13,6 +13,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from lib.decode_forensics import VERDICT_INCONCLUSIVE, VERDICT_VIOLATION
 from lib.profiles import PROFILES
 
 
@@ -320,13 +321,38 @@ def build_score(
     if failure_reason:
         out["reason"] = failure_reason
 
+    review_required = False
+    cpu_decode_override: str | None = None
+
     for profile in PROFILES:
         metrics = profile_metrics.get(profile)
         if metrics is None:
             continue
         s = score_profile(profile, metrics)
-        out[profile] = s.to_dict()
-        out["objective_total"] += s.total
+        pd = s.to_dict()
+
+        # Decode-path gate (fail-open): only a positive `violation` deducts.
+        forensics = metrics.get("decode_forensics") or {}
+        verdict = forensics.get("verdict")
+        if verdict:
+            pd["decode_path"] = {
+                "verdict": verdict,
+                "checks": forensics.get("checks"),
+                "evidence": forensics.get("evidence"),
+            }
+        if verdict == VERDICT_VIOLATION:
+            pd["correctness_points"] = 0
+            pd["fps_points"] = 0
+            pd["total"] = 0
+            if profile == CPU_PROFILE:
+                cpu_decode_override = "decode_path_violation"
+        elif verdict == VERDICT_INCONCLUSIVE:
+            review_required = True
+
+        out[profile] = pd
+        out["objective_total"] += pd["total"]
+
+    out["review_required"] = review_required
 
     if per_round_reasons:
         for profile, reason in per_round_reasons.items():
@@ -337,6 +363,8 @@ def build_score(
             out[profile] = block
 
     cpu_effective_override = cpu_override_reason
+    if not cpu_effective_override and cpu_decode_override:
+        cpu_effective_override = cpu_decode_override
     if failure_reason and not cpu_effective_override:
         cpu_effective_override = "host_failure"
 

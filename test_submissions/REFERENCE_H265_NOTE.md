@@ -1,19 +1,38 @@
-# Why the bundled reference scores 15/30, not 30/30
+# Self-test H.265 references and the decode-path enforcement
 
-Internal note. Not shipped to contestants. The spec does NOT prescribe any
-rendering strategy.
+Internal note. Not shipped to contestants.
 
-The bundled `reference.zip` exercises the evaluator pipeline against a
-known-good frontend that uses `<video>`. On the canonical evaluation host
-(Ubuntu 24.04 + Google Chrome, no hardware HEVC decoder), `<video>` reports
-`supported: false` for HEVC, so the reference's H.265 round fails with
-`DEMUXER_ERROR_NO_SUPPORTED_STREAMS`. H.264 plays natively and scores 15/15.
+## Intent-B: H.265 must be decoded in the browser
 
-`scripts/test.sh` accepts this with `total_ge:13` so the self-test passes.
+The contest rewards plugin-free **in-browser** H.265 decode (WASM / WebCodecs).
+The evaluator enforces this with Decode-Path Forensics (see
+`openspec/specs/evaluator/spec.md` — Requirement: Decode-Path Forensics): it
+inspects the codec of the stream entering the browser's decode path and, on a
+positive violation, zeros that profile's correctness + FPS (and CPU for 2K).
+The policy is **fail-open** — only positive violation evidence deducts.
 
-If we ever need a fully-passing H.265 reference (e.g. to validate the H.265
-analyzer / scorer code paths end-to-end against a known-good frame stream
-on this host), the implementation would live under
-`test_submissions/src/reference/web/` and would not change the spec — the
-runtime contract is `[data-testid="player-video"]` with the readiness signals
-regardless of rendering strategy.
+On the canonical host Chrome cannot decode HEVC via `<video>`/MSE/WebCodecs
+(only `avc1`), so the only viable legal path is a contestant-supplied WASM HEVC
+decoder rendering to `<canvas>`.
+
+## The legit reference: the bundled native contestant
+
+The bundled `submissions/self-test` native `video_server` contestant is the
+**legitimate in-browser reference**. Despite its `captureChannel → encodeChannel`
+config naming, it does NOT transcode: it relays the **H.265 elementary stream
+over WebSocket** to a canvas+WASM decoder. Verified via the instrumented
+evaluator (2026-05-30): `decode_path.verdict = "ok"`, `sinks = ["hevc"]`, no
+`<video>` decoder, scored **29.3 / 30** on both profiles.
+
+## The cheat reference: `transcode_to_h264`
+
+`test_submissions/src/transcode_to_h264/` is the negative case: it transcodes
+the H.265 source to H.264 server-side and plays it in a native `<video>`.
+Decode-Path Forensics Check 1 detects the active `<video>` decoder
+(`kVideoDecoderName` on an HEVC-incapable host) → `verdict = "violation"`, and
+the scorer zeros both profiles. Self-test expectation:
+`verdict_2k:violation,verdict_4k:violation,total_le:0`.
+
+(The previous version of this note described an `<video>`-based H.264 reference
+scoring 15/30 under the old per-codec layout. That layout — and the H.264 round —
+were removed by the codec→profile refactor; both profiles are H.265 now.)

@@ -30,6 +30,7 @@ from playwright.sync_api import (
     sync_playwright,
 )
 
+from lib import decode_forensics as _forensics
 from lib.profiles import PROFILES, FRONTEND_PORT
 
 
@@ -63,6 +64,7 @@ class CaptureResult:
     capture_strategy: str = CAPTURE_STRATEGY_PLAYWRIGHT
     jpeg_quality: int = DEFAULT_JPEG_QUALITY
     clip: dict | None = None
+    decode_forensics: dict | None = None
 
 
 def run_capture(
@@ -77,6 +79,7 @@ def run_capture(
     output.mkdir(parents=True, exist_ok=True)
     spec = PROFILES[profile]
     result = CaptureResult(success=False)
+    collector = _forensics.ForensicsCollector()
     result.target_fps = fps
     result.target_duration_s = duration_s
     result.capture_strategy = _resolve_capture_strategy(capture_strategy)
@@ -147,6 +150,9 @@ def run_capture(
             lambda w: result.browser_errors.append(f"worker.created: {w.url}"),
         )
         page.on("crash", lambda _p: result.browser_errors.append("page.crash"))
+
+        # Decode-path forensics (best-effort, installed before navigation).
+        _install_forensics(context, page, collector)
 
         try:
             # NEVER networkidle — streaming apps keep network busy forever.
@@ -330,6 +336,16 @@ def run_capture(
                 result.cpu_sample_result = sample_result.to_dict()
             if spec.cpu_sampled and contestant_pgid is not None:
                 _write_capture_meta(output, profile, result)
+            try:
+                result.decode_forensics = collector.result()
+            except Exception as exc:  # collector is defensive, but never fail here
+                result.decode_forensics = {
+                    "verdict": _forensics.VERDICT_INCONCLUSIVE,
+                    "checks": {},
+                    "evidence": [],
+                    "errors": [f"collector: {exc}"],
+                }
+            _write_decode_forensics(output, result)
 
         browser.close()
 
@@ -400,6 +416,165 @@ def _capture_screenshot(
         return
 
     raise ValueError(f"unknown capture strategy {strategy!r}")
+
+
+# Pre-load instrumentation (Check 2): wrap the entry points where bytes reach a
+# decode sink and report a small hex sample back to Python. Defensive throughout
+# — any failure is swallowed so a contestant page can't be broken by forensics.
+_FORENSIC_INIT_JS = r"""
+(() => {
+  try {
+    const cap = {n: 0};
+    const report = (obj) => {
+      try { if (cap.n++ < 200 && window.__forensicReport) window.__forensicReport(JSON.stringify(obj)); }
+      catch (e) {}
+    };
+    const u8 = (buf) => {
+      try {
+        if (buf instanceof ArrayBuffer) return new Uint8Array(buf);
+        if (ArrayBuffer.isView(buf)) return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+      } catch (e) {}
+      return null;
+    };
+    const hex = (buf, max) => {
+      const a = u8(buf); if (!a) return '';
+      const n = Math.min(a.length, max || 256); let s = '';
+      for (let i = 0; i < n; i++) s += a[i].toString(16).padStart(2, '0');
+      return s;
+    };
+    const sample = (sink, buf) => { const h = hex(buf, 256); if (h) report({sink, hex: h}); };
+
+    // WebSocket messages.
+    const RealWS = window.WebSocket;
+    if (RealWS) {
+      const WS = function (...args) {
+        const ws = new RealWS(...args);
+        try {
+          ws.addEventListener('message', (ev) => {
+            try {
+              const d = ev.data;
+              if (d instanceof ArrayBuffer) sample('websocket', d);
+              else if (d && d.arrayBuffer) d.arrayBuffer().then((b) => sample('websocket', b)).catch(() => {});
+            } catch (e) {}
+          });
+        } catch (e) {}
+        return ws;
+      };
+      WS.prototype = RealWS.prototype;
+      ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'].forEach((k) => { try { WS[k] = RealWS[k]; } catch (e) {} });
+      window.WebSocket = WS;
+    }
+
+    // fetch responses (sample the first few only).
+    const realFetch = window.fetch;
+    if (realFetch) {
+      let fcount = 0;
+      window.fetch = function (...args) {
+        return realFetch.apply(this, args).then((resp) => {
+          try {
+            if (fcount++ < 8 && resp && resp.clone) {
+              resp.clone().arrayBuffer().then((b) => sample('fetch', b)).catch(() => {});
+            }
+          } catch (e) {}
+          return resp;
+        });
+      };
+    }
+
+    // MSE appendBuffer — the cleanest <video> feed signal.
+    if (window.SourceBuffer && SourceBuffer.prototype && SourceBuffer.prototype.appendBuffer) {
+      const realAppend = SourceBuffer.prototype.appendBuffer;
+      SourceBuffer.prototype.appendBuffer = function (data) {
+        try { sample('appendBuffer', data); } catch (e) {}
+        return realAppend.call(this, data);
+      };
+    }
+
+    // WebCodecs VideoDecoder.configure — codec string directly.
+    if (window.VideoDecoder && VideoDecoder.prototype && VideoDecoder.prototype.configure) {
+      const realConf = VideoDecoder.prototype.configure;
+      VideoDecoder.prototype.configure = function (cfg) {
+        try { if (cfg && cfg.codec) report({sink: 'videodecoder', codec: cfg.codec}); } catch (e) {}
+        return realConf.call(this, cfg);
+      };
+    }
+  } catch (e) {}
+})();
+"""
+
+
+def _ingest_forensic_report(collector: "_forensics.ForensicsCollector", payload: str) -> None:
+    """Python sink for window.__forensicReport — classify a JS-sampled buffer."""
+    try:
+        obj = json.loads(payload)
+    except (TypeError, ValueError):
+        return
+    sink = obj.get("sink", "?")
+    if "codec" in obj:
+        collector.note_sink_codec_string(obj["codec"], sink=sink)
+        return
+    hexstr = obj.get("hex")
+    if hexstr:
+        try:
+            data = bytes.fromhex(hexstr)
+        except ValueError:
+            return
+        collector.note_sink_bytes(data, sink=sink)
+
+
+def _ingest_media_props(collector: "_forensics.ForensicsCollector", state: dict, params: dict) -> None:
+    """CDP Media.playerPropertiesChanged handler (Check 1)."""
+    try:
+        for prop in params.get("properties", []) or []:
+            name = prop.get("name", "") or ""
+            value = prop.get("value")
+            # kVideoDecoderName is set when Chrome initializes a video decoder —
+            # which only happens for a codec it can decode (never HEVC on this
+            # host). That alone is the Check-1 violation signal.
+            if name == "kVideoDecoderName" and value and str(value).strip():
+                collector.note_video_decoder(codec=str(value), present=True)
+            elif name == "kVideoTracks" and value:
+                state["codec"] = value
+            elif "FramesDecoded" in name:  # alt signal on builds that surface it
+                try:
+                    frames = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if frames > 0:
+                    collector.note_video_decoder(codec=state.get("codec"), frames_decoded=frames)
+    except Exception as exc:  # CDP payloads are untrusted — never let one break capture
+        collector.note_error(f"media_props: {exc}")
+
+
+def _install_forensics(context, page, collector: "_forensics.ForensicsCollector"):
+    """Wire Check 1 (CDP Media) + Check 2 (init-script instrumentation). Best
+    effort: every step is independently guarded so a failure only costs signal,
+    degrading the verdict to inconclusive (fail-open) — never failing the round."""
+    try:
+        page.expose_function("__forensicReport", lambda payload: _ingest_forensic_report(collector, payload))
+    except PlaywrightError as exc:
+        collector.note_error(f"expose_function: {exc}")
+    try:
+        context.add_init_script(_FORENSIC_INIT_JS)
+    except PlaywrightError as exc:
+        collector.note_error(f"add_init_script: {exc}")
+    try:
+        media = context.new_cdp_session(page)
+        media.send("Media.enable")
+        state: dict = {"codec": None}
+        media.on("Media.playerPropertiesChanged", lambda params: _ingest_media_props(collector, state, params))
+    except PlaywrightError as exc:
+        collector.note_error(f"cdp_media: {exc}")
+
+
+def _write_decode_forensics(output: Path, result: CaptureResult) -> None:
+    """Write decode_forensics.json next to the screenshots. analyzer.py forwards
+    it into `<profile>_metrics.json`; scorer.py consumes the verdict (fail-open
+    when absent)."""
+    forensics = result.decode_forensics
+    if forensics is None:
+        return
+    (output / "decode_forensics.json").write_text(json.dumps(forensics, indent=2))
 
 
 def _write_capture_meta(output: Path, profile: str, result: CaptureResult) -> None:

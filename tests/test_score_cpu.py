@@ -22,24 +22,24 @@ def fps_at(ratio: float) -> float:
 @pytest.mark.parametrize(
     "mean_cpu, expected_points",
     [
-        (0.0, 10),
-        (4.99, 10),
-        (5.0, 10),
-        (5.5, 10),
-        (6.0, 10),
-        (7.0, 9),
-        (8.0, 9),
-        (9.0, 8),
-        (10.0, 7),
-        (11.0, 6),
-        (12.0, 6),
-        (13.0, 5),
-        (14.0, 4),
-        (15.0, 4),
-        (16.0, 3),
-        (17.0, 2),
+        (0.0, 5),
+        (4.99, 5),
+        (5.0, 5),
+        (5.5, 5),
+        (6.0, 5),
+        (7.0, 5),
+        (8.0, 4),
+        (9.0, 4),
+        (10.0, 4),
+        (11.0, 3),
+        (12.0, 3),
+        (13.0, 2),
+        (14.0, 2),
+        (15.0, 2),
+        (16.0, 1),
+        (17.0, 1),
         (18.0, 1),
-        (19.0, 1),
+        (19.0, 0),
         (20.0, 0),
         (20.001, 0),
         (99.0, 0),
@@ -82,7 +82,7 @@ def test_score_cpu_default_gate_passes_just_above_065():
         mean_cpu_percent=2.0,
         measured_fps=fps_at(0.66),
     )
-    assert points == 10
+    assert points == 5
     assert reason is None
 
 
@@ -156,11 +156,11 @@ def test_build_score_objective_total_includes_cpu():
         {"2k": _2k_full_with_cpu(2.0), "4k": _profile_full()},
         chromium_version="test",
     )
-    # 5 correctness + 5 fps per profile = 10; plus 10 CPU = 30
-    assert out["objective_total"] == 10 + 10 + 10
+    # 2k: 5 correctness + 5 fps = 10; 4k: 5 correctness + 10 fps = 15; CPU 5 -> 30
+    assert out["objective_total"] == 30
     assert out["2k"]["total"] == 10
-    assert out["4k"]["total"] == 10
-    assert out["cpu"]["points"] == 10
+    assert out["4k"]["total"] == 15
+    assert out["cpu"]["points"] == 5
     assert out["cpu"]["gated"] is False
     assert out["cpu"]["gate_reason"] is None
     assert out["cpu"]["measured_on_profile"] == "2k"

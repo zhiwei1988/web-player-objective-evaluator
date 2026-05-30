@@ -377,6 +377,22 @@ def metrics_to_dict(m: CodecMetrics) -> dict:
     }
 
 
+def _load_decode_forensics(screenshots_dir: Path) -> dict | None:
+    """Read the runner's decode_forensics.json sidecar if present.
+
+    Mirrors the capture_meta.json → cpu pass-through: analyzer.py does no
+    forensic computation itself; runner.py is the source of truth, scorer.py
+    is the consumer. Absent or corrupt → None (fail-open downstream).
+    """
+    forensics_file = screenshots_dir / "decode_forensics.json"
+    if not forensics_file.exists():
+        return None
+    try:
+        return json.loads(forensics_file.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def _cli() -> int:
     p = argparse.ArgumentParser(description="Analyze captured screenshots.")
     p.add_argument("--profile", required=True, choices=sorted(PROFILES.keys()),
@@ -401,6 +417,11 @@ def _cli() -> int:
                 metrics_dict["cpu"] = cpu
         except (OSError, json.JSONDecodeError):
             pass
+    # Forward the runner's decode-path forensic verdict if it left one. Same
+    # contract as cpu above: scorer.py consumes metrics["decode_forensics"].
+    forensics = _load_decode_forensics(args.screenshots)
+    if forensics is not None:
+        metrics_dict["decode_forensics"] = forensics
     args.output.write_text(json.dumps(metrics_dict, indent=2))
     print(json.dumps({
         "profile": args.profile,

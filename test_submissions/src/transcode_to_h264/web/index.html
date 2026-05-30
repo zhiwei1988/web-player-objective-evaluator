@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Transcode cheat (self-test)</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; }
+  #player {
+    display: block;
+    width: 1280px;
+    height: 720px;
+    object-fit: contain;
+    background: #000;
+  }
+</style>
+</head>
+<body>
+<video id="player" data-testid="player-video" autoplay muted loop playsinline></video>
+<script>
+(() => {
+  // Cheat: play the server-side-transcoded H.264 in a native <video>. The
+  // browser decodes H.264 natively (it cannot decode the source HEVC), which
+  // Decode-Path Forensics Check 1 detects via the active video decoder.
+  const params = new URLSearchParams(window.location.search);
+  const profile = params.get('profile') === '4k' ? '4k' : '2k';
+  const v = document.getElementById('player');
+  const ready = () => { window.__PLAYER_READY__ = true; };
+  v.addEventListener('playing', ready, { once: true });
+  v.addEventListener('loadeddata', ready, { once: true });
+  v.addEventListener('error', () => {
+    window.__PLAYER_ERROR__ = 'video decode failed: ' + (v.error && v.error.code);
+  });
+  v.src = `/${profile}.mp4`;
+  const pr = v.play();
+  if (pr && pr.catch) pr.catch(() => {});
+})();
+</script>
+</body>
+</html>

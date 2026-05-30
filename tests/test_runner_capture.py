@@ -6,10 +6,72 @@ from types import SimpleNamespace
 import pytest
 
 import runner
+from lib import decode_forensics as _forensics
 
 
 def test_default_capture_viewport_is_contract_size():
     assert runner.CAPTURE_VIEWPORT == {"width": 1280, "height": 720}
+
+
+# ---- decode-path forensics glue (no browser) ---------------------------------
+
+def test_write_decode_forensics_roundtrip(tmp_path):
+    res = runner.CaptureResult(success=True)
+    res.decode_forensics = {"verdict": "violation", "checks": {}, "evidence": ["x"], "errors": []}
+    runner._write_decode_forensics(tmp_path, res)
+    out = json.loads((tmp_path / "decode_forensics.json").read_text())
+    assert out["verdict"] == "violation"
+
+
+def test_write_decode_forensics_noop_when_none(tmp_path):
+    res = runner.CaptureResult(success=True)
+    runner._write_decode_forensics(tmp_path, res)
+    assert not (tmp_path / "decode_forensics.json").exists()
+
+
+def test_ingest_forensic_report_hevc_bytes_is_ok():
+    c = _forensics.ForensicsCollector()
+    runner._ingest_forensic_report(
+        c, json.dumps({"sink": "appendBuffer", "hex": b"\x00\x00\x00\x01\x40\x01".hex()})
+    )
+    assert c.result()["verdict"] == "ok"
+
+
+def test_ingest_forensic_report_codec_string_is_violation():
+    c = _forensics.ForensicsCollector()
+    runner._ingest_forensic_report(c, json.dumps({"sink": "videodecoder", "codec": "avc1.640028"}))
+    assert c.result()["verdict"] == "violation"
+
+
+def test_ingest_media_props_frames_decoded_triggers_violation():
+    c = _forensics.ForensicsCollector()
+    runner._ingest_media_props(c, {"codec": None}, {"properties": [{"name": "kFramesDecoded", "value": "7"}]})
+    assert c.result()["verdict"] == "violation"
+
+
+def test_ingest_media_props_video_decoder_name_triggers_violation():
+    # The real Check-1 signal on the eval host's Chrome: a <video> decoder was
+    # initialized (only happens for a browser-decodable, i.e. non-HEVC, codec).
+    c = _forensics.ForensicsCollector()
+    runner._ingest_media_props(
+        c, {"codec": None}, {"properties": [{"name": "kVideoDecoderName", "value": "FFmpegVideoDecoder"}]}
+    )
+    res = c.result()
+    assert res["verdict"] == "violation"
+    assert res["checks"]["video_decoder_codec"] == "FFmpegVideoDecoder"
+
+
+def test_ingest_media_props_empty_decoder_name_is_not_a_signal():
+    c = _forensics.ForensicsCollector()
+    runner._ingest_media_props(c, {"codec": None}, {"properties": [{"name": "kVideoDecoderName", "value": ""}]})
+    assert c.result()["verdict"] == "inconclusive"
+
+
+def test_ingest_handles_garbage_without_raising():
+    c = _forensics.ForensicsCollector()
+    runner._ingest_forensic_report(c, "not json")
+    runner._ingest_media_props(c, {"codec": None}, {"bogus": True})
+    assert c.result()["verdict"] == "inconclusive"
 
 
 def test_clip_below_minimum_is_rejected():
