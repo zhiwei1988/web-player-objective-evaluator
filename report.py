@@ -307,8 +307,37 @@ def render_report(
         for k, v in toolchain.items()
     )
 
+    gate = score.get("gate") or {}
+
+    def gate_summary_row() -> str:
+        if not gate:
+            return ""
+        passed = gate.get("passed")
+        state = (
+            '<span class="ok">passed</span>' if passed
+            else '<span class="fail">FAILED</span>'
+        )
+        return (
+            f'<tr><th>level-0 gate ({html.escape(str(gate.get("profile") or ""))})</th>'
+            f'<td>{state} — correctness {gate.get("correctness_points", 0)}/5, '
+            f'fps {gate.get("fps_points", 0)}/5</td></tr>'
+        )
+
+    gate_banner = ""
+    if gate and not gate.get("passed", True):
+        gate_banner = (
+            '<div class="banner" style="background:#fdecea;border-left-color:#c0392b;">'
+            f'<strong>Level-0 gate failed.</strong> The '
+            f'{html.escape(str(gate.get("profile") or "2k"))} profile did not reach full '
+            f'marks (correctness {gate.get("correctness_points", 0)}/5, '
+            f'fps {gate.get("fps_points", 0)}/5). The remaining profiles were not '
+            f'captured and score 0; the CPU sub-score is voided.</div>'
+        )
+
     profile_labels = {"2k": "2K profile", "4k": "4K profile"}
     summary_rows = []
+    if gate:
+        summary_rows.append(gate_summary_row())
     artifact_links = []
     for profile in sorted(PROFILES.keys()):
         label = profile_labels.get(profile, f"{profile} profile")
@@ -364,6 +393,7 @@ code {{ background: #f5f5f7; padding: 1px 4px; border-radius: 3px; }}
 </style></head>
 <body>
 <div class="banner"><strong>Internal use only.</strong> This report is not exposed to contestants.</div>
+{gate_banner}
 {review_banner}
 
 <h1>Evaluator report</h1>

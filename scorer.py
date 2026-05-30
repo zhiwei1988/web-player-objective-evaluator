@@ -20,6 +20,17 @@ from lib.profiles import PROFILES
 EXPECTED_FPS: dict[str, float] = {name: float(spec.fps) for name, spec in PROFILES.items()}
 
 
+# Level-0 gate. The gate profile's correctness AND fps sub-scores must BOTH be at
+# full marks before the remaining profiles and the CPU sub-score are scored. The
+# gate reuses the published full-mark bands (score_correctness / score_fps) — there
+# is no separate gate threshold.
+GATE_PROFILE = "2k"
+GATE_SKIP_REASON = "skipped_gate_failed"
+"""per-profile `reason` set on downstream profiles skipped because the gate failed."""
+GATE_CPU_REASON = "gate_failed"
+"""cpu `gate_reason` when the CPU sub-score is voided by a failed level-0 gate."""
+
+
 # FPS scoring tunables. Per-profile so 2K (easier) can be held to a stricter
 # bar than 4K. See openspec/specs/evaluator/spec.md — Scoring requirement.
 FPS_FULL_RATIO_BY_PROFILE: dict[str, float] = {"2k": 0.85}
@@ -156,6 +167,30 @@ def score_fps(measured: float, expected: float, profile: str) -> float:
     if ratio >= partial_ratio:
         return 3
     return 0
+
+
+def gate_passed(metrics: dict | None) -> bool:
+    """Level-0 gate verdict for the gate profile's metrics.
+
+    Returns True iff the gate profile earns FULL correctness AND FULL fps, reusing
+    the published full-mark bands (no separate thresholds). A decode-path
+    `violation` (which zeros the effective correctness/fps), or missing/incomplete
+    metrics, fails the gate — keeping this in lock-step with the effective 2K
+    sub-scores `build_score` emits.
+    """
+    if not metrics:
+        return False
+    forensics = metrics.get("decode_forensics") or {}
+    if forensics.get("verdict") == VERDICT_VIOLATION:
+        return False
+    rate_wm = float(metrics.get("watermark_recognition_rate") or 0.0)
+    rate_color = float(metrics.get("color_check_rate") or 0.0)
+    mean_ssim = float(metrics.get("mean_ssim") or 0.0)
+    measured_fps = float(metrics.get("measured_fps") or 0.0)
+    expected_fps = EXPECTED_FPS[GATE_PROFILE]
+    full_correctness = score_correctness(rate_wm, rate_color, mean_ssim) == 5
+    full_fps = score_fps(measured_fps, expected_fps, GATE_PROFILE) == 5
+    return full_correctness and full_fps
 
 
 CPU_PROFILE = next((name for name, spec in PROFILES.items() if spec.cpu_sampled), "2k")
@@ -324,6 +359,7 @@ def build_score(
     review_required = False
     cpu_decode_override: str | None = None
 
+    # Pass 1: score every profile block, applying the per-profile decode-path gate.
     for profile in PROFILES:
         metrics = profile_metrics.get(profile)
         if metrics is None:
@@ -350,9 +386,37 @@ def build_score(
             review_required = True
 
         out[profile] = pd
-        out["objective_total"] += pd["total"]
 
     out["review_required"] = review_required
+
+    # Level-0 gate: the gate profile's correctness AND fps must both be full marks.
+    # Derived independently of which profiles were captured, so a contestant cannot
+    # bank downstream points when 2K is imperfect — and the orchestrator's
+    # capture short-circuit cannot change the emitted score.
+    gate_pass = gate_passed(profile_metrics.get(GATE_PROFILE))
+    gate_block = out.get(GATE_PROFILE) or {}
+    out["gate"] = {
+        "profile": GATE_PROFILE,
+        "passed": gate_pass,
+        "correctness_points": gate_block.get("correctness_points", 0),
+        "fps_points": gate_block.get("fps_points", 0),
+    }
+
+    # On gate failure the downstream profiles are not scored: keep the gate
+    # profile's actual sub-scores, but zero every other profile (preserving any
+    # decode_path evidence) and tag it skipped.
+    if not gate_pass:
+        for profile in PROFILES:
+            if profile == GATE_PROFILE:
+                continue
+            block = out.get(profile)
+            if block is None:
+                out[profile] = {"reason": GATE_SKIP_REASON}
+            else:
+                block["correctness_points"] = 0
+                block["fps_points"] = 0
+                block["total"] = 0
+                block["reason"] = GATE_SKIP_REASON
 
     if per_round_reasons:
         for profile, reason in per_round_reasons.items():
@@ -369,8 +433,23 @@ def build_score(
         cpu_effective_override = "host_failure"
 
     cpu_block = _build_cpu_block(profile_metrics, cpu_effective_override)
+    # A failed gate voids the CPU sub-score — but only when the CPU block would
+    # otherwise have scored. A more specific reason already set by
+    # _build_cpu_block (decode_path_violation, 2k_round_failed, sampler_no_data,
+    # container_mode_unsupported, host_failure) is more informative and wins.
+    if not gate_pass and not cpu_block.get("gated"):
+        cpu_block["points"] = 0
+        cpu_block["gated"] = True
+        cpu_block["gate_reason"] = GATE_CPU_REASON
     out["cpu"] = cpu_block
-    out["objective_total"] += cpu_block["points"]
+
+    objective_total = 0
+    for profile in PROFILES:
+        block = out.get(profile)
+        if block:
+            objective_total += block.get("total", 0)
+    objective_total += cpu_block["points"]
+    out["objective_total"] = objective_total
     return out
 
 
@@ -389,7 +468,11 @@ def _cli() -> int:
     p.add_argument("--metrics", action="append", default=[],
                    metavar="PROFILE=PATH",
                    help="Per-profile metrics JSON (repeat once per profile).")
-    p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--gate-check", metavar="PROFILE=PATH", default=None,
+                   help="Evaluate the level-0 gate on PROFILE's metrics and exit "
+                        "0 (passed) / 1 (failed) without writing any output. Used "
+                        "by scripts/evaluator.sh to short-circuit downstream capture.")
+    p.add_argument("--output", type=Path, required=False)
     p.add_argument("--report", type=Path, required=False)
     p.add_argument("--install-prefix", type=Path, required=False,
                    help="Path to third_party/install/ for Chromium version pickup.")
@@ -401,6 +484,19 @@ def _cli() -> int:
                    help="Force a gate_reason in the cpu block (used by the host "
                         "container wrapper to flag container_mode_unsupported).")
     args = p.parse_args()
+
+    if args.gate_check:
+        gate_paths = _parse_kv([args.gate_check], "--gate-check")
+        (profile, path_str), = gate_paths.items()
+        if profile not in PROFILES:
+            raise SystemExit(f"--gate-check: unknown profile {profile!r}; "
+                             f"valid: {sorted(PROFILES.keys())}")
+        path = Path(path_str)
+        metrics = json.loads(path.read_text()) if path.exists() else None
+        return 0 if gate_passed(metrics) else 1
+
+    if args.output is None:
+        raise SystemExit("--output is required (unless using --gate-check)")
 
     metrics_paths = _parse_kv(args.metrics, "--metrics")
     profile_metrics: dict[str, dict | None] = {prof: None for prof in PROFILES}

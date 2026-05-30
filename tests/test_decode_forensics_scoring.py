@@ -73,9 +73,13 @@ def test_violation_excludes_profile_from_objective_total():
     assert out["objective_total"] == 0
 
 
+# 4K is only ever scored when the level-0 gate (a perfect 2K) opens, so these
+# fail-open cases supply a passing 2K rather than the legacy 2k=None input.
+
 def test_ok_verdict_scores_normally_and_records_block():
     out = scorer.build_score(
-        {"2k": None, "4k": _forensics(_clean_metrics(EXPECTED["4k"]), "ok")},
+        {"2k": _clean_metrics(EXPECTED["2k"]),
+         "4k": _forensics(_clean_metrics(EXPECTED["4k"]), "ok")},
         chromium_version="t",
     )
     assert out["4k"]["correctness_points"] == 5
@@ -86,7 +90,8 @@ def test_ok_verdict_scores_normally_and_records_block():
 
 def test_inconclusive_scores_normally_but_flags_review():
     out = scorer.build_score(
-        {"2k": None, "4k": _forensics(_clean_metrics(EXPECTED["4k"]), "inconclusive")},
+        {"2k": _clean_metrics(EXPECTED["2k"]),
+         "4k": _forensics(_clean_metrics(EXPECTED["4k"]), "inconclusive")},
         chromium_version="t",
     )
     assert out["4k"]["correctness_points"] == 5
@@ -96,7 +101,7 @@ def test_inconclusive_scores_normally_but_flags_review():
 
 def test_absent_forensics_is_backward_compatible():
     out = scorer.build_score(
-        {"2k": None, "4k": _clean_metrics(EXPECTED["4k"])},
+        {"2k": _clean_metrics(EXPECTED["2k"]), "4k": _clean_metrics(EXPECTED["4k"])},
         chromium_version="t",
     )
     assert out["4k"]["correctness_points"] == 5

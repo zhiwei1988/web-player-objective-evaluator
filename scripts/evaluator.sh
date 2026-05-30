@@ -219,20 +219,52 @@ analyze_profile() {
         --output "${metrics}"
 }
 
+# Level-0 gate: capture the gate profile first; only if its 2K correctness AND
+# fps are both full marks do we capture the remaining profiles. The gate verdict
+# itself lives in scorer.py (--gate-check); this loop only short-circuits capture
+# to save wall-clock — the final scorer enforces the gate independently.
+GATE_PROFILE="$("${ROOT_DIR}/.venv/bin/python" -c "import scorer; print(scorer.GATE_PROFILE)")"
+ORDERED_PROFILES=("${GATE_PROFILE}")
 for profile in "${PROFILES_TO_RUN[@]}"; do
+    [[ "${profile}" == "${GATE_PROFILE}" ]] || ORDERED_PROFILES+=("${profile}")
+done
+
+GATE_FAILED=0
+for profile in "${ORDERED_PROFILES[@]}"; do
     shots_dir="${RUN_DIR}/${profile}_screenshots"
     metrics_path="${RUN_DIR}/${profile}_metrics.json"
     METRICS_PATH[${profile}]="${metrics_path}"
     run_capture "${profile}" "${shots_dir}" || true
     analyze_profile "${profile}" "${shots_dir}" "${metrics_path}" || true
+
+    if [[ "${profile}" == "${GATE_PROFILE}" ]]; then
+        if "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scorer.py" \
+                --gate-check "${GATE_PROFILE}=${metrics_path}"; then
+            log "level-0 gate passed (${GATE_PROFILE}); capturing remaining profiles"
+        else
+            GATE_FAILED=1
+            log "level-0 gate failed (${GATE_PROFILE}); skipping remaining profiles"
+            break
+        fi
+    fi
 done
+
+# Tag the profiles we skipped so the report explains the zeros. build_score also
+# enforces this independently, so the tag is informational, not load-bearing.
+if (( GATE_FAILED )); then
+    for profile in "${PROFILES_TO_RUN[@]}"; do
+        [[ "${profile}" == "${GATE_PROFILE}" ]] && continue
+        PROFILE_REASON[${profile}]="skipped_gate_failed"
+    done
+fi
 
 # Score + report.
 SCORER_ARGS=(--output "${SCORE_FILE}" --report "${REPORT_FILE}"
              --install-prefix "${ROOT_DIR}/third_party/install")
 for profile in "${PROFILES_TO_RUN[@]}"; do
-    metrics_path="${METRICS_PATH[${profile}]}"
-    [[ -f "${metrics_path}" ]] && SCORER_ARGS+=(--metrics "${profile}=${metrics_path}")
+    # Gate-skipped profiles are never captured, so their METRICS_PATH key is unset.
+    metrics_path="${METRICS_PATH[${profile}]:-}"
+    [[ -n "${metrics_path}" && -f "${metrics_path}" ]] && SCORER_ARGS+=(--metrics "${profile}=${metrics_path}")
     reason="${PROFILE_REASON[${profile}]:-}"
     [[ -n "${reason}" ]] && SCORER_ARGS+=(--profile-reason "${profile}=${reason}")
 done
