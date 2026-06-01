@@ -65,6 +65,7 @@ class CaptureResult:
     jpeg_quality: int = DEFAULT_JPEG_QUALITY
     clip: dict | None = None
     decode_forensics: dict | None = None
+    contestant_feedback: list[str] = field(default_factory=list)
 
 
 def run_capture(
@@ -596,6 +597,7 @@ def _write_capture_meta(output: Path, profile: str, result: CaptureResult) -> No
 
 
 def _write_timestamps(output: Path, result: CaptureResult) -> None:
+    contestant_feedback = _contestant_feedback_from_result(result)
     (output / "timestamps.json").write_text(
         json.dumps(
             {
@@ -607,12 +609,31 @@ def _write_timestamps(output: Path, result: CaptureResult) -> None:
                 "capture_strategy": result.capture_strategy,
                 "jpeg_quality": result.jpeg_quality,
                 "clip": result.clip,
+                "contestant_feedback": contestant_feedback,
                 "browser_errors": result.browser_errors,
                 "chromium_version": result.chromium_version,
             },
             indent=2,
         )
     )
+
+
+def _contestant_feedback_from_result(result: CaptureResult) -> list[str]:
+    if result.contestant_feedback:
+        return list(result.contestant_feedback)
+    if result.success or not result.reason:
+        return []
+    reason = str(result.reason)
+    contestant_patterns = (
+        "startup timeout",
+        "missing data-testid",
+        "player-video below minimum size",
+        "navigation timeout",
+        "navigation failed",
+    )
+    if any(pattern in reason for pattern in contestant_patterns):
+        return [reason]
+    return []
 
 
 def _cli() -> int:

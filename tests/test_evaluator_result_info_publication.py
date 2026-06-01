@@ -67,8 +67,8 @@ def _full_score_json() -> dict:
     }
 
 
-def _failure_score_json(reason: str) -> dict:
-    return {
+def _failure_score_json(reason: str, contestant_feedback: list[str] | None = None) -> dict:
+    score = {
         "max_score": 30,
         "objective_total": 0,
         "cpu": {
@@ -95,6 +95,9 @@ def _failure_score_json(reason: str) -> dict:
         "4k": None,
         "reason": reason,
     }
+    if contestant_feedback is not None:
+        score["contestant_feedback"] = contestant_feedback
+    return score
 
 
 def _drive_write_result_info(
@@ -246,6 +249,32 @@ def test_contestant_side_failure_publishes_with_result_zero(tmp_path):
     assert "contestant_frontend_unavailable" not in content.split("|debug|")[0]
     # And appears in debug.
     assert "contestant_frontend_unavailable" in content.split("|debug|")[1]
+
+
+def test_contestant_side_feedback_is_published_identically(tmp_path):
+    run_dir, uploads_dir, _, proc = _drive_write_result_info(
+        tmp_path=tmp_path,
+        score=_failure_score_json(
+            "contestant_frontend_unavailable",
+            contestant_feedback=[
+                "Frontend did not become reachable.",
+                "npm ERR! missing script: start",
+            ],
+        ),
+        failure_reason="contestant_frontend_unavailable",
+        result_code_arg="",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+
+    audit = run_dir / "result.info"
+    published = uploads_dir / "result.info"
+    assert audit.read_bytes() == published.read_bytes()
+
+    content = audit.read_text()
+    assert "Execution Feedback:" in content
+    assert "- Frontend did not become reachable." in content
+    assert "- npm ERR! missing script: start" in content
 
 
 # ---------------------------------------------------------------------------

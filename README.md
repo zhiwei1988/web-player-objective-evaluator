@@ -114,8 +114,9 @@ also extracts the submission zip into that same directory and invokes
 submission zip because archive entries may overwrite files in that directory.
 The published file is intentionally a lossy projection of `score.json`: its
 `|info|` block is contestant-visible (total + five item scores: 2K correctness,
-2K FPS, 4K correctness, 4K FPS, CPU); its `|debug|` block carries
-organizer-facing diagnostics. Format spec is in
+2K FPS, 4K correctness, 4K FPS, CPU, plus an optional sanitized
+`Execution Feedback` section for contestant-side startup/capture failures);
+its `|debug|` block carries organizer-facing diagnostics. Format spec is in
 `openspec/specs/evaluator/spec.md` (Requirement: Contest Platform Result Info);
 sample is at `reference/result-sample.info`.
 

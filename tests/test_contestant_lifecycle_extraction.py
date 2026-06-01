@@ -91,3 +91,33 @@ def test_extracted_files_are_made_executable_recursively(tmp_path: Path) -> None
         path = upload_dir / rel
         assert path.exists(), rel
         assert os.access(path, os.X_OK), f"{rel} should be executable"
+
+
+def test_missing_start_records_contestant_feedback(tmp_path: Path) -> None:
+    upload_dir = tmp_path / "uploads" / "team_missing_start"
+    upload_dir.mkdir(parents=True)
+    submission_zip = upload_dir / "submission.zip"
+    with zipfile.ZipFile(submission_zip, "w") as zf:
+        _add_zip_file(zf, "README.txt", "no start script here\n")
+
+    harness = textwrap.dedent(
+        f"""\
+        set -uo pipefail
+        ROOT_DIR={str(tmp_path)!r}
+        source {str(HELPER)!r}
+        trap 'printf "FEEDBACK=%s\\n" "${{HOST_CONTESTANT_FEEDBACK[*]:-}}"' EXIT
+        clx_prepare_run_dir 'team_missing_start'
+        clx_extract_submission {str(submission_zip)!r}
+        """
+    )
+    proc = subprocess.run(
+        ["bash", "-c", harness],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert proc.returncode == 2
+    assert "missing required start.sh" in proc.stdout

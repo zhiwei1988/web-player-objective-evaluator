@@ -9,8 +9,9 @@ final multi-line organizer-facing field.
 `result.info` is a projection of `score.json` (the authoritative score
 artifact) and is intentionally lossy:
 
-- `info` is contestant-visible: only the total score and the five scoring
-  item point values (2K correctness, 2K FPS, 4K correctness, 4K FPS, CPU).
+- `info` is contestant-visible: total score, the five scoring item point
+  values (2K correctness, 2K FPS, 4K correctness, 4K FPS, CPU), and optional
+  sanitized execution feedback for contestant-side failures.
 - `debug` is organizer-facing: run directory, top-level reason, per-profile
   measured diagnostics, CPU gate diagnostics, and Chromium version.
 
@@ -88,6 +89,21 @@ def _build_info_lines(score: dict) -> list[str]:
         if pts is None:
             pts = 0
         lines.append(f"- {label}: {_fmt_num(pts)} / {_fmt_num(max_pts)}")
+
+    feedback = score.get("contestant_feedback")
+    if isinstance(feedback, str):
+        feedback_lines = [feedback.strip()] if feedback.strip() else []
+    elif isinstance(feedback, list):
+        feedback_lines = [
+            str(item).strip()
+            for item in feedback
+            if item is not None and str(item).strip()
+        ]
+    else:
+        feedback_lines = []
+    if feedback_lines:
+        lines.extend(["", "Execution Feedback:"])
+        lines.extend(f"- {line}" for line in feedback_lines)
     return lines
 
 

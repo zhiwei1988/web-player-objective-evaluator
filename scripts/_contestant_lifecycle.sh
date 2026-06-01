@@ -9,6 +9,7 @@ LOCK_FILE="/var/tmp/evaluator.lock"
 # (so RUN_DIR exists) but BEFORE the scoring pipeline produced score.json.
 # The evaluator cleanup trap reads this to write a failure score.json.
 HOST_FAILURE_REASON=""
+HOST_CONTESTANT_FEEDBACK=()
 
 clx_log() { printf '[contestant] %s\n' "$*" >&2; }
 clx_die() {
@@ -21,6 +22,23 @@ clx_die_with_reason() {
     HOST_FAILURE_REASON="$1"
     printf 'evaluator: %s\n' "$1" >&2
     exit "${2:-2}"
+}
+
+clx_record_contestant_feedback() {
+    local line="${1:-}"
+    [[ -n "${line}" ]] || return 0
+    HOST_CONTESTANT_FEEDBACK+=("${line}")
+}
+
+clx_collect_contestant_log_feedback() {
+    local summary="${1:-}" log_file="${2:-}" max_lines="${3:-20}"
+    clx_record_contestant_feedback "${summary}"
+    [[ -n "${log_file}" && -f "${log_file}" ]] || return 0
+    local line
+    while IFS= read -r line; do
+        [[ -n "${line}" ]] || continue
+        clx_record_contestant_feedback "${line}"
+    done < <(tail -n "${max_lines}" "${log_file}" 2>/dev/null || true)
 }
 
 clx_acquire_lock() {
@@ -73,7 +91,10 @@ clx_extract_submission() {
             rmdir "${inner}" 2>/dev/null || true
         fi
     fi
-    [[ -f "${STAGE_DIR}/start.sh" ]] || clx_die_with_reason "contestant_frontend_unavailable" 2
+    if [[ ! -f "${STAGE_DIR}/start.sh" ]]; then
+        clx_record_contestant_feedback "Submission is missing required start.sh."
+        clx_die_with_reason "contestant_frontend_unavailable" 2
+    fi
     chmod -R a+x "${STAGE_DIR}"
     return 0
 }

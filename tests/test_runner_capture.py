@@ -102,6 +102,34 @@ def test_timestamps_include_capture_metadata(tmp_path):
     assert out["clip"] == {"x": 0, "y": 0, "width": 1280, "height": 720}
 
 
+def test_timestamps_include_contestant_feedback_for_capture_reason(tmp_path):
+    result = runner.CaptureResult(
+        success=False,
+        reason="missing data-testid=player-video",
+    )
+
+    runner._write_timestamps(tmp_path, result)
+
+    out = json.loads((tmp_path / "timestamps.json").read_text())
+    assert out["contestant_feedback"] == ["missing data-testid=player-video"]
+
+
+def test_timestamps_include_player_error_feedback_without_full_diagnostics(tmp_path):
+    result = runner.CaptureResult(
+        success=False,
+        reason="startup timeout (__PLAYER_ERROR__=decoder failed)",
+    )
+    result.browser_errors.append('diagnostic: {"url":"http://localhost:8080/play","error":"decoder failed"}')
+    result.browser_errors.append("pageerror: Error: full stack trace")
+
+    runner._write_timestamps(tmp_path, result)
+
+    out = json.loads((tmp_path / "timestamps.json").read_text())
+    assert "startup timeout (__PLAYER_ERROR__=decoder failed)" in out["contestant_feedback"]
+    assert not any("diagnostic:" in line for line in out["contestant_feedback"])
+    assert not any("full stack trace" in line for line in out["contestant_feedback"])
+
+
 def test_capture_meta_records_2k_cpu_profile(tmp_path):
     result = runner.CaptureResult(
         success=True,

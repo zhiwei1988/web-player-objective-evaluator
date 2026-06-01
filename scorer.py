@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -84,6 +85,59 @@ CPU_ZERO_THRESHOLD_PERCENT: float = 20.0
 
 CPU_MIN_SAMPLES: int = 3
 """Below this sample count, mean_cpu_percent is treated as missing."""
+
+
+CONTESTANT_SIDE_FAILURE_REASONS: frozenset[str] = frozenset({
+    "contestant_frontend_unavailable",
+})
+"""Top-level failure reasons whose feedback can be shown to contestants."""
+
+CONTESTANT_FEEDBACK_MAX_LINES = 8
+CONTESTANT_FEEDBACK_MAX_LINE_CHARS = 240
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_ABS_PATH_RE = re.compile(
+    r"(?<!:)\/(?:home|tmp|var|work|workspace|root|mnt|opt|usr|etc|run|proc|dev)\/[^\s:;,)]*"
+)
+
+
+def normalize_contestant_feedback(
+    lines: list[str] | tuple[str, ...] | None,
+    *,
+    max_lines: int = CONTESTANT_FEEDBACK_MAX_LINES,
+    max_line_chars: int = CONTESTANT_FEEDBACK_MAX_LINE_CHARS,
+) -> list[str]:
+    """Return bounded, sanitized feedback lines safe for contestant-facing info."""
+    out: list[str] = []
+    if not lines:
+        return out
+    for raw in lines:
+        if raw is None:
+            continue
+        for part in str(raw).splitlines() or [str(raw)]:
+            line = _ANSI_ESCAPE_RE.sub("", part)
+            line = line.replace("\t", " ")
+            line = _CONTROL_CHAR_RE.sub("", line)
+            line = _ABS_PATH_RE.sub("[path]", line)
+            line = line.strip()
+            if not line:
+                continue
+            if len(line) > max_line_chars:
+                line = line[:max_line_chars]
+            out.append(line)
+            if len(out) >= max_lines:
+                return out
+    return out
+
+
+def _allows_contestant_feedback(
+    failure_reason: str | None,
+    per_round_reasons: dict | None,
+) -> bool:
+    if failure_reason:
+        return failure_reason in CONTESTANT_SIDE_FAILURE_REASONS
+    return bool(per_round_reasons)
 
 
 @dataclass
@@ -340,6 +394,7 @@ def build_score(
     failure_reason: str | None = None,
     per_round_reasons: dict | None = None,
     cpu_override_reason: str | None = None,
+    contestant_feedback: list[str] | None = None,
 ) -> dict:
     out: dict = {
         "max_score": 30,
@@ -352,6 +407,10 @@ def build_score(
 
     if failure_reason:
         out["reason"] = failure_reason
+
+    feedback = normalize_contestant_feedback(contestant_feedback)
+    if feedback and _allows_contestant_feedback(failure_reason, per_round_reasons):
+        out["contestant_feedback"] = feedback
 
     review_required = False
     cpu_decode_override: str | None = None
@@ -461,6 +520,9 @@ def _cli() -> int:
     p.add_argument("--profile-reason", action="append", default=[],
                    metavar="PROFILE=REASON",
                    help="Per-profile failure reason (repeat once per profile).")
+    p.add_argument("--contestant-feedback", action="append", default=[],
+                   help="Candidate contestant-facing execution feedback line. "
+                        "Repeat to pass bounded log tails or capture reasons.")
     p.add_argument("--cpu-override-reason", type=str, default=None,
                    help="Force a gate_reason in the cpu block (used by the host "
                         "container wrapper to flag container_mode_unsupported).")
@@ -486,6 +548,7 @@ def _cli() -> int:
         failure_reason=args.failure_reason,
         per_round_reasons=per_round_reasons,
         cpu_override_reason=args.cpu_override_reason,
+        contestant_feedback=args.contestant_feedback,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(score, indent=2))

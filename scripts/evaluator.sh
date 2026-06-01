@@ -46,6 +46,7 @@ REPORT_FILE=""
 RESULT_INFO_FILE=""
 FAILURE_REASON=""
 PROFILES_TO_RUN=()
+CONTESTANT_FEEDBACK=()
 declare -A PROFILE_REASON=()
 declare -A METRICS_PATH=()
 
@@ -69,6 +70,10 @@ write_failure_score() {
                 --report "${REPORT_FILE}"
                 --install-prefix "${ROOT_DIR}/third_party/install"
                 --failure-reason "${reason}")
+    local feedback
+    for feedback in "${HOST_CONTESTANT_FEEDBACK[@]:-}" "${CONTESTANT_FEEDBACK[@]:-}"; do
+        [[ -n "${feedback}" ]] && args+=(--contestant-feedback "${feedback}")
+    done
     local profile r
     for profile in "${PROFILES_TO_RUN[@]}"; do
         r="${PROFILE_REASON[${profile}]:-}"
@@ -142,6 +147,10 @@ clx_start_contestant
 if ! clx_wait_frontend_ready; then
     FAILURE_REASON="contestant_frontend_unavailable"
     log "contestant frontend never became ready"
+    clx_collect_contestant_log_feedback \
+        "Frontend did not become reachable within the evaluator readiness window." \
+        "${RUN_DIR}/contestant.log" \
+        20
     write_failure_score "${FAILURE_REASON}"
     exit 2
 fi
@@ -201,6 +210,10 @@ run_capture() {
     reason="$(python3 -c "import json; print(json.load(open('${out}/timestamps.json')).get('reason') or '')" 2>/dev/null || true)"
     log "  ${profile} runner failed: ${reason}"
     PROFILE_REASON[${profile}]="${reason}"
+    local feedback
+    while IFS= read -r feedback; do
+        [[ -n "${feedback}" ]] && CONTESTANT_FEEDBACK+=("${profile}: ${feedback}")
+    done < <(python3 -c "import json; data=json.load(open('${out}/timestamps.json')); print('\n'.join(data.get('contestant_feedback') or []))" 2>/dev/null || true)
     return 1
 }
 
@@ -235,6 +248,9 @@ for profile in "${PROFILES_TO_RUN[@]}"; do
     [[ -n "${metrics_path}" && -f "${metrics_path}" ]] && SCORER_ARGS+=(--metrics "${profile}=${metrics_path}")
     reason="${PROFILE_REASON[${profile}]:-}"
     [[ -n "${reason}" ]] && SCORER_ARGS+=(--profile-reason "${profile}=${reason}")
+done
+for feedback in "${CONTESTANT_FEEDBACK[@]:-}"; do
+    [[ -n "${feedback}" ]] && SCORER_ARGS+=(--contestant-feedback "${feedback}")
 done
 
 "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scorer.py" "${SCORER_ARGS[@]}" >/dev/null

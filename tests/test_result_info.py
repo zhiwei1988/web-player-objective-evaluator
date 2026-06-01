@@ -216,6 +216,51 @@ def test_info_lists_all_five_scoring_items_normal_run():
     assert "- CPU: 3 / 5" in info
 
 
+def test_info_appends_execution_feedback_after_scoring_items():
+    score = _failure_score("contestant_frontend_unavailable")
+    score["contestant_feedback"] = [
+        "Frontend did not become reachable.",
+        "npm ERR! missing script: start",
+    ]
+    text = result_info.render(score=score, runtime_ms=42, run_dir="/r", result_code=0)
+    fields = _parse_fields(text)
+    info = fields["info"]
+
+    assert "- CPU: 0 / 5\n\nExecution Feedback:" in info
+    assert "- Frontend did not become reachable." in info
+    assert "- npm ERR! missing script: start" in info
+
+
+@pytest.mark.parametrize("feedback", [None, [], "", ["", "   "]])
+def test_info_omits_execution_feedback_when_absent_or_empty(feedback):
+    score = _full_score()
+    if feedback is not None:
+        score["contestant_feedback"] = feedback
+    text = result_info.render(score=score, runtime_ms=42, run_dir="/r")
+    fields = _parse_fields(text)
+    assert "Execution Feedback:" not in fields["info"]
+
+
+def test_execution_feedback_does_not_copy_internal_debug_fields_into_info():
+    score = _failure_score("contestant_frontend_unavailable")
+    score["contestant_feedback"] = ["Submission frontend did not become reachable."]
+    text = result_info.render(
+        score=score,
+        runtime_ms=42,
+        run_dir="/results/team_ref_20260522",
+        result_code=0,
+    )
+    fields = _parse_fields(text)
+
+    info = fields["info"]
+    assert "Submission frontend did not become reachable." in info
+    assert "/results/team_ref_20260522" not in info
+    assert "Chromium 131.0.6778.85" not in info
+    assert "measured_fps" not in info
+    assert "gate_fps_ratio" not in info
+    assert "contestant_frontend_unavailable" not in info
+
+
 def test_score_field_drops_trailing_zeroes():
     score = _full_score(four_k_fps_points=1.5, objective_total=19.5)
     text = result_info.render(score=score, runtime_ms=1, run_dir="/r")
