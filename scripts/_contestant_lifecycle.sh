@@ -12,6 +12,12 @@ HOST_FAILURE_REASON=""
 HOST_CONTESTANT_FEEDBACK=()
 
 clx_log() { printf '[contestant] %s\n' "$*" >&2; }
+clx_close_lock_fd() {
+    exec 9>&- || true
+}
+clx_without_lock_fd() {
+    (clx_close_lock_fd; "$@")
+}
 clx_die() {
     local message="$1"
     local rc="${2:-1}"
@@ -45,7 +51,7 @@ clx_acquire_lock() {
     exec 9>"${LOCK_FILE}"
     if ! flock -n 9; then
         local holder
-        holder="$(lsof -t "${LOCK_FILE}" 2>/dev/null | head -1 || echo unknown)"
+        holder="$(clx_without_lock_fd lsof -t "${LOCK_FILE}" 2>/dev/null | head -1 || echo unknown)"
         clx_die "another evaluator run is in progress (pid=${holder})" 75
     fi
 }
@@ -60,7 +66,7 @@ clx_precheck_ports() {
         query+="sport = :${p}"
     done
     local busy
-    busy="$(ss -lntH "${query}" 2>/dev/null || true)"
+    busy="$(clx_without_lock_fd ss -lntH "${query}" 2>/dev/null || true)"
     if [[ -n "${busy}" ]]; then
         printf 'evaluator: port(s) %s occupied:\n%s\n' "${ports[*]}" "${busy}" >&2
         exit 1
@@ -81,7 +87,7 @@ clx_extract_submission() {
     local zip_path="$1"
     [[ -f "${zip_path}" ]] || clx_die "submission zip not found: ${zip_path}" 1
     STAGE_DIR="$(cd "$(dirname "${zip_path}")" && pwd)"
-    unzip -qq "${zip_path}" -d "${STAGE_DIR}" || clx_die "unzip failed" 1
+    clx_without_lock_fd unzip -o -qq "${zip_path}" -d "${STAGE_DIR}" || clx_die "unzip failed" 1
     # Lift single-top-dir layout if present.
     if [[ ! -f "${STAGE_DIR}/start.sh" ]]; then
         local inner
@@ -103,7 +109,7 @@ clx_start_contestant() {
     export RTSP_SERVER_HOST=127.0.0.1
     export RTSP_SERVER_PORT=554
     export FRONTEND_PORT=8080
-    (cd "${STAGE_DIR}" && setsid ./start.sh) > "${RUN_DIR}/contestant.log" 2>&1 &
+    (clx_close_lock_fd; cd "${STAGE_DIR}" && exec setsid ./start.sh) > "${RUN_DIR}/contestant.log" 2>&1 &
     CONTESTANT_PID=$!
     echo "${CONTESTANT_PID}" > "${RUN_DIR}/contestant.pid"
     clx_log "contestant pid=${CONTESTANT_PID}"
@@ -112,7 +118,7 @@ clx_start_contestant() {
 clx_wait_frontend_ready() {
     local i
     for i in $(seq 1 60); do
-        if curl -fsS -o /dev/null --max-time 2 "http://127.0.0.1:8080/play?profile=2k&autoplay=1"; then
+        if clx_without_lock_fd curl -fsS -o /dev/null --max-time 2 "http://127.0.0.1:8080/play?profile=2k&autoplay=1"; then
             clx_log "frontend reachable after ${i}s"
             return 0
         fi
@@ -124,13 +130,13 @@ clx_wait_frontend_ready() {
 clx_cleanup_contestant() {
     if [[ -n "${CONTESTANT_PID:-}" ]] && kill -0 "${CONTESTANT_PID}" 2>/dev/null; then
         if [[ -x "${STAGE_DIR}/stop.sh" ]]; then
-            (cd "${STAGE_DIR}" && timeout 10 ./stop.sh) > /dev/null 2>&1 || true
+            (clx_close_lock_fd; cd "${STAGE_DIR}" && timeout 10 ./stop.sh) > /dev/null 2>&1 || true
         fi
         kill -- "-${CONTESTANT_PID}" 2>/dev/null || true
         sleep 1
         kill -9 -- "-${CONTESTANT_PID}" 2>/dev/null || true
     fi
-    fuser -k 8080/tcp 2>/dev/null || true
+    clx_without_lock_fd fuser -k 8080/tcp 2>/dev/null || true
 }
 
 clx_emit_score_to_fd3() {

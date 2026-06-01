@@ -93,6 +93,21 @@ def test_extracted_files_are_made_executable_recursively(tmp_path: Path) -> None
         assert os.access(path, os.X_OK), f"{rel} should be executable"
 
 
+def test_repeated_extraction_overwrites_without_prompt(tmp_path: Path) -> None:
+    upload_dir = tmp_path / "uploads" / "team_repeat"
+    upload_dir.mkdir(parents=True)
+    submission_zip = upload_dir / "submission.zip"
+    (upload_dir / "start.sh").write_text("#!/usr/bin/env bash\necho old\n")
+    with zipfile.ZipFile(submission_zip, "w") as zf:
+        _add_zip_file(zf, "start.sh", "#!/usr/bin/env bash\necho new\n", mode=0o644)
+
+    proc = _run_extract_harness(tmp_path, submission_zip, team_id="team_repeat")
+
+    assert proc.returncode == 0, proc.stderr
+    assert "echo new" in (upload_dir / "start.sh").read_text()
+    assert os.access(upload_dir / "start.sh", os.X_OK)
+
+
 def test_missing_start_records_contestant_feedback(tmp_path: Path) -> None:
     upload_dir = tmp_path / "uploads" / "team_missing_start"
     upload_dir.mkdir(parents=True)

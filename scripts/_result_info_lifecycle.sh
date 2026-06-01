@@ -74,7 +74,12 @@ write_result_info() {
         --output "${RESULT_INFO_FILE}"
         --result-code "${result_code}"
     )
-    if ! "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/result_info.py" "${renderer_args[@]}"; then
+    local run_without_lock=()
+    if declare -F clx_without_lock_fd >/dev/null 2>&1; then
+        run_without_lock=(clx_without_lock_fd)
+    fi
+
+    if ! "${run_without_lock[@]}" "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/result_info.py" "${renderer_args[@]}"; then
         rinfo_log "result.info renderer failed (result_code=${result_code}); leaving prior file if any"
         return 1
     fi
@@ -85,7 +90,7 @@ write_result_info() {
     dest_dir="$(dirname "${SUBMISSION_ZIP}")"
     if [[ -n "${dest_dir}" && -d "${dest_dir}" ]]; then
         dest="${dest_dir}/result.info"
-        if cp -f "${RESULT_INFO_FILE}" "${dest}"; then
+        if "${run_without_lock[@]}" cp -f "${RESULT_INFO_FILE}" "${dest}"; then
             rinfo_log "result.info published to ${dest}"
         else
             rinfo_log "evaluator failure: failed to publish result.info to ${dest}"

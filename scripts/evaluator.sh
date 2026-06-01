@@ -79,7 +79,7 @@ write_failure_score() {
         r="${PROFILE_REASON[${profile}]:-}"
         [[ -n "${r}" ]] && args+=(--profile-reason "${profile}=${r}")
     done
-    "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scorer.py" "${args[@]}" >/dev/null 2>&1 || true
+    clx_without_lock_fd "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scorer.py" "${args[@]}" >/dev/null 2>&1 || true
 }
 
 stop_mediamtx() {
@@ -90,7 +90,7 @@ stop_mediamtx() {
         if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
             log "stopping mediamtx pid ${pid}"
             kill -TERM "${pid}" 2>/dev/null || true
-            sleep 0.5
+            clx_without_lock_fd sleep 0.5
             kill -KILL "${pid}" 2>/dev/null || true
         fi
         rm -f "${ROOT_DIR}/rtsp_server/mediamtx.pid"
@@ -113,7 +113,7 @@ cleanup() {
         fi
     fi
     if [[ -n "${SCORE_FILE:-}" && -f "${SCORE_FILE}" ]]; then
-        cat "${SCORE_FILE}" >&3 || true
+        clx_without_lock_fd cat "${SCORE_FILE}" >&3 || true
     fi
     exit "${rc}"
 }
@@ -127,7 +127,7 @@ REPORT_FILE="${RUN_DIR}/report.html"
 RESULT_INFO_FILE="${RUN_DIR}/result.info"
 
 # Tee logs to the run log, but preserve stdout for the final score JSON.
-exec > >(tee -a "${LOG_FILE}" >&2) 2>&1
+exec > >(clx_close_lock_fd; tee -a "${LOG_FILE}" >&2) 2>&1
 trap cleanup EXIT INT TERM
 
 log "starting run team_id=${TEAM_ID} submission=${SUBMISSION_ZIP} run_dir=${RUN_DIR}"
@@ -156,22 +156,22 @@ if ! clx_wait_frontend_ready; then
 fi
 
 # Read profile names from the single truth source.
-mapfile -t PROFILES_TO_RUN < <("${ROOT_DIR}/.venv/bin/python" -c \
+mapfile -t PROFILES_TO_RUN < <(clx_without_lock_fd "${ROOT_DIR}/.venv/bin/python" -c \
     "from lib.profiles import PROFILES; print('\n'.join(sorted(PROFILES.keys())))")
 (( ${#PROFILES_TO_RUN[@]} > 0 )) || { die "no profiles defined in lib.profiles.PROFILES"; exit 1; }
 
-log "chromium=$(tr '\n' ' ' < "${ROOT_DIR}/third_party/install/playwright_chromium.version" 2>/dev/null)"
+log "chromium=$(clx_without_lock_fd tr '\n' ' ' < "${ROOT_DIR}/third_party/install/playwright_chromium.version" 2>/dev/null)"
 log "profiles=${PROFILES_TO_RUN[*]}"
 
 # Bring MediaMTX up for this run.
 log "starting RTSP server"
-if ! "${SCRIPT_DIR}/start_rtsp.sh"; then
+if ! clx_without_lock_fd "${SCRIPT_DIR}/start_rtsp.sh"; then
     FAILURE_REASON="rtsp infrastructure failure"
     log "${FAILURE_REASON}"
     exit 1
 fi
 for profile in "${PROFILES_TO_RUN[@]}"; do
-    if ! "${SCRIPT_DIR}/health_check.sh" "${profile}" 15; then
+    if ! clx_without_lock_fd "${SCRIPT_DIR}/health_check.sh" "${profile}" 15; then
         FAILURE_REASON="rtsp infrastructure failure (${profile} unreadable)"
         log "${FAILURE_REASON}"
         exit 1
@@ -185,7 +185,7 @@ run_capture() {
     # CPU sampling is opt-in per profile via PROFILES[profile].cpu_sampled.
     local extra_args=()
     local cpu_sampled
-    cpu_sampled="$("${ROOT_DIR}/.venv/bin/python" -c \
+    cpu_sampled="$(clx_without_lock_fd "${ROOT_DIR}/.venv/bin/python" -c \
         "from lib.profiles import PROFILES; print('1' if PROFILES['${profile}'].cpu_sampled else '0')")"
     if [[ "${cpu_sampled}" == "1" && -f "${RUN_DIR}/contestant.pid" ]]; then
         local pgid
@@ -197,35 +197,35 @@ run_capture() {
 
     # Per-profile fps from the registry keeps capture cadence tied to source fps.
     local profile_fps
-    profile_fps="$("${ROOT_DIR}/.venv/bin/python" -c \
+    profile_fps="$(clx_without_lock_fd "${ROOT_DIR}/.venv/bin/python" -c \
         "from lib.profiles import PROFILES; print(PROFILES['${profile}'].fps)")"
 
-    if "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/runner.py" \
+    if clx_without_lock_fd "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/runner.py" \
             --profile "${profile}" --output "${out}" \
             --duration 30 --fps "${profile_fps}" \
             "${extra_args[@]}"; then
         return 0
     fi
     local reason
-    reason="$(python3 -c "import json; print(json.load(open('${out}/timestamps.json')).get('reason') or '')" 2>/dev/null || true)"
+    reason="$(clx_without_lock_fd python3 -c "import json; print(json.load(open('${out}/timestamps.json')).get('reason') or '')" 2>/dev/null || true)"
     log "  ${profile} runner failed: ${reason}"
     PROFILE_REASON[${profile}]="${reason}"
     local feedback
     while IFS= read -r feedback; do
         [[ -n "${feedback}" ]] && CONTESTANT_FEEDBACK+=("${profile}: ${feedback}")
-    done < <(python3 -c "import json; data=json.load(open('${out}/timestamps.json')); print('\n'.join(data.get('contestant_feedback') or []))" 2>/dev/null || true)
+    done < <(clx_without_lock_fd python3 -c "import json; data=json.load(open('${out}/timestamps.json')); print('\n'.join(data.get('contestant_feedback') or []))" 2>/dev/null || true)
     return 1
 }
 
 analyze_profile() {
     local profile="$1" shots="$2" metrics="$3"
     local refdir
-    refdir="$("${ROOT_DIR}/.venv/bin/python" -c "from lib.profiles import PROFILES; print(PROFILES['${profile}'].reference_dir)")"
+    refdir="$(clx_without_lock_fd "${ROOT_DIR}/.venv/bin/python" -c "from lib.profiles import PROFILES; print(PROFILES['${profile}'].reference_dir)")"
     if ! compgen -G "${shots}/shot_*.png" >/dev/null && ! compgen -G "${shots}/shot_*.jpg" >/dev/null; then
         log "no ${profile} screenshots; skipping analyzer"
         return 1
     fi
-    "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/analyzer.py" \
+    clx_without_lock_fd "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/analyzer.py" \
         --profile "${profile}" \
         --screenshots "${shots}" \
         --reference "${ROOT_DIR}/${refdir}" \
@@ -253,7 +253,7 @@ for feedback in "${CONTESTANT_FEEDBACK[@]:-}"; do
     [[ -n "${feedback}" ]] && SCORER_ARGS+=(--contestant-feedback "${feedback}")
 done
 
-"${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scorer.py" "${SCORER_ARGS[@]}" >/dev/null
+clx_without_lock_fd "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scorer.py" "${SCORER_ARGS[@]}" >/dev/null
 
 log "score written to ${SCORE_FILE}"
 log "report written to ${REPORT_FILE}"

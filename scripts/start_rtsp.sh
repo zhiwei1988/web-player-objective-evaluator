@@ -45,8 +45,7 @@ log "launching mediamtx (config=${CONFIG})"
 # and resolves `-i streams/...` from there. (MediaMTX does NOT expand env vars
 # or Go templates in YAML, so we can't use ${ROOT_DIR} inside the config.)
 cd "${ROOT_DIR}"
-nohup "${BINARY}" "${CONFIG}" > "${LOG_FILE}" 2>&1 &
-echo $! > "${PID_FILE}"
+(exec 9>&- || true; nohup "${BINARY}" "${CONFIG}" > "${LOG_FILE}" 2>&1 & echo $! > "${PID_FILE}")
 
 # Brief settle. MediaMTX binds quickly but on-demand paths only spawn ffmpeg
 # at first connection, which is fine — health_check.sh triggers that.
