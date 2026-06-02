@@ -478,6 +478,7 @@ def _transform_applied(style: dict) -> bool:
 def _derive_layout_warnings(diagnostics: dict) -> list[str]:
     warnings: list[str] = []
     clip = diagnostics.get("clip") or {}
+    viewport = diagnostics.get("viewport") or {}
     host = diagnostics.get("host") or {}
     host_box = host.get("bbox") or {}
     host_style = host.get("computedStyle") or {}
@@ -488,6 +489,14 @@ def _derive_layout_warnings(diagnostics: dict) -> list[str]:
     if clip and (clip_w < MIN_PLAYER_WIDTH or clip_h < MIN_PLAYER_HEIGHT):
         warnings.append(
             f"host clip below contract size ({clip_w:g}x{clip_h:g} < {MIN_PLAYER_WIDTH}x{MIN_PLAYER_HEIGHT})"
+        )
+    if _clip_exceeds_viewport(clip, viewport):
+        viewport_w = float(viewport.get("width") or 0)
+        viewport_h = float(viewport.get("height") or 0)
+        clip_x = float(clip.get("x") or 0)
+        clip_y = float(clip.get("y") or 0)
+        warnings.append(
+            f"capture clip exceeds browser viewport ({clip_w:g}x{clip_h:g} at x={clip_x:g},y={clip_y:g} > {viewport_w:g}x{viewport_h:g}); beyond-viewport capture may be slower"
         )
     if _transform_applied(host_style):
         warnings.append("player host has CSS transform applied")
@@ -593,6 +602,54 @@ def _collect_layout_diagnostics(page, clip: dict | None) -> dict | None:
     return _normalize_layout_diagnostics(raw, clip)
 
 
+def _clip_exceeds_viewport(clip: dict | None, viewport: dict | None) -> bool:
+    if not clip or not viewport:
+        return False
+    try:
+        x = float(clip.get("x") or 0)
+        y = float(clip.get("y") or 0)
+        width = float(clip.get("width") or 0)
+        height = float(clip.get("height") or 0)
+        viewport_width = float(viewport.get("width") or 0)
+        viewport_height = float(viewport.get("height") or 0)
+    except (TypeError, ValueError):
+        return False
+    if viewport_width <= 0 or viewport_height <= 0:
+        return False
+    return x < 0 or y < 0 or x + width > viewport_width or y + height > viewport_height
+
+
+def _capture_cdp_screenshot(
+    *,
+    page,
+    path: Path,
+    clip: dict,
+    jpeg_quality: int,
+) -> None:
+    session = page.context.new_cdp_session(page)
+    try:
+        res = session.send(
+            "Page.captureScreenshot",
+            {
+                "format": "jpeg",
+                "quality": jpeg_quality,
+                "clip": {
+                    "x": float(clip["x"]),
+                    "y": float(clip["y"]),
+                    "width": float(clip["width"]),
+                    "height": float(clip["height"]),
+                    "scale": 1,
+                },
+                "fromSurface": True,
+                "captureBeyondViewport": True,
+                "optimizeForSpeed": True,
+            },
+        )
+        path.write_bytes(base64.b64decode(res["data"]))
+    finally:
+        session.detach()
+
+
 def _capture_screenshot(
     *,
     page,
@@ -602,6 +659,15 @@ def _capture_screenshot(
     jpeg_quality: int,
 ) -> None:
     if strategy == CAPTURE_STRATEGY_PLAYWRIGHT:
+        viewport = getattr(page, "viewport_size", None)
+        if _clip_exceeds_viewport(clip, viewport):
+            _capture_cdp_screenshot(
+                page=page,
+                path=path,
+                clip=clip,
+                jpeg_quality=jpeg_quality,
+            )
+            return
         page.screenshot(
             path=str(path),
             clip=clip,
@@ -611,28 +677,12 @@ def _capture_screenshot(
         return
 
     if strategy == CAPTURE_STRATEGY_CDP:
-        session = page.context.new_cdp_session(page)
-        try:
-            res = session.send(
-                "Page.captureScreenshot",
-                {
-                    "format": "jpeg",
-                    "quality": jpeg_quality,
-                    "clip": {
-                        "x": float(clip["x"]),
-                        "y": float(clip["y"]),
-                        "width": float(clip["width"]),
-                        "height": float(clip["height"]),
-                        "scale": 1,
-                    },
-                    "fromSurface": True,
-                    "captureBeyondViewport": False,
-                    "optimizeForSpeed": True,
-                },
-            )
-            path.write_bytes(base64.b64decode(res["data"]))
-        finally:
-            session.detach()
+        _capture_cdp_screenshot(
+            page=page,
+            path=path,
+            clip=clip,
+            jpeg_quality=jpeg_quality,
+        )
         return
 
     raise ValueError(f"unknown capture strategy {strategy!r}")

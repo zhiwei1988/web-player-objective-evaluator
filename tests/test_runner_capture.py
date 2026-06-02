@@ -4,6 +4,8 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
+from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
 import runner
 from lib import decode_forensics as _forensics
@@ -183,6 +185,19 @@ def test_layout_warning_for_oversized_canvas_in_clipped_host():
     assert any("larger than clipped host" in warning for warning in warnings)
 
 
+def test_layout_warning_for_clip_exceeding_viewport():
+    diagnostics = {
+        "viewport": {"width": 1280, "height": 720},
+        "clip": {"x": 1, "y": 1, "width": 2558, "height": 1438},
+        "host": {"bbox": {"width": 2558, "height": 1438}, "computedStyle": {}},
+        "media": [{"tag": "canvas", "bbox": {"width": 2558, "height": 1438}, "intrinsic": {"width": 2558, "height": 1438}}],
+    }
+
+    warnings = runner._derive_layout_warnings(diagnostics)
+
+    assert any("capture clip exceeds browser viewport" in warning for warning in warnings)
+
+
 def test_layout_warnings_for_transform_missing_media_and_zero_intrinsic_size():
     diagnostics = {
         "ready": True,
@@ -310,3 +325,114 @@ def test_capture_meta_accepts_already_serialized_cpu_dict(tmp_path):
 def test_capture_strategy_names_are_explicit():
     assert runner.CAPTURE_STRATEGY_PLAYWRIGHT == "playwright"
     assert runner.CAPTURE_STRATEGY_CDP == "cdp"
+
+
+class _FakeSession:
+    def __init__(self):
+        self.sent = []
+        self.detached = False
+
+    def send(self, method, params):
+        self.sent.append((method, params))
+        return {"data": "AQID"}
+
+    def detach(self):
+        self.detached = True
+
+
+class _FakeContext:
+    def __init__(self, session):
+        self.session = session
+
+    def new_cdp_session(self, page):
+        return self.session
+
+
+class _FakePage:
+    def __init__(self, viewport):
+        self.viewport_size = viewport
+        self.session = _FakeSession()
+        self.context = _FakeContext(self.session)
+        self.playwright_screenshots = []
+
+    def screenshot(self, **kwargs):
+        self.playwright_screenshots.append(kwargs)
+
+
+def test_playwright_strategy_uses_cdp_beyond_viewport_for_oversized_clip(tmp_path):
+    page = _FakePage({"width": 1280, "height": 720})
+    path = tmp_path / "shot.jpg"
+
+    runner._capture_screenshot(
+        page=page,
+        path=path,
+        clip={"x": 1, "y": 1, "width": 2558, "height": 1438},
+        strategy=runner.CAPTURE_STRATEGY_PLAYWRIGHT,
+        jpeg_quality=90,
+    )
+
+    assert page.playwright_screenshots == []
+    method, params = page.session.sent[0]
+    assert method == "Page.captureScreenshot"
+    assert params["captureBeyondViewport"] is True
+    assert params["clip"]["width"] == 2558.0
+    assert path.read_bytes() == b"\x01\x02\x03"
+
+
+def test_playwright_strategy_keeps_playwright_for_clip_inside_viewport(tmp_path):
+    page = _FakePage({"width": 1280, "height": 720})
+    path = tmp_path / "shot.jpg"
+
+    runner._capture_screenshot(
+        page=page,
+        path=path,
+        clip={"x": 0, "y": 0, "width": 1280, "height": 720},
+        strategy=runner.CAPTURE_STRATEGY_PLAYWRIGHT,
+        jpeg_quality=90,
+    )
+
+    assert len(page.playwright_screenshots) == 1
+    assert page.session.sent == []
+
+
+def test_cdp_strategy_captures_beyond_viewport(tmp_path):
+    page = _FakePage({"width": 1280, "height": 720})
+    path = tmp_path / "shot.jpg"
+
+    runner._capture_screenshot(
+        page=page,
+        path=path,
+        clip={"x": 0, "y": 0, "width": 1280, "height": 720},
+        strategy=runner.CAPTURE_STRATEGY_CDP,
+        jpeg_quality=90,
+    )
+
+    assert page.session.sent[0][1]["captureBeyondViewport"] is True
+
+
+def test_real_browser_capture_can_exceed_viewport(tmp_path):
+    path = tmp_path / "shot.jpg"
+    with sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(channel="chrome", headless=True, args=["--no-sandbox"])
+        except PlaywrightError:
+            browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+        context = browser.new_context(viewport={"width": 1280, "height": 720})
+        page = context.new_page()
+        page.set_content(
+            '<html><body style="margin:0">'
+            '<div data-testid="player-video" '
+            'style="width:2558px;height:1438px;background:linear-gradient(135deg, red, blue)">'
+            '</div></body></html>'
+        )
+
+        runner._capture_screenshot(
+            page=page,
+            path=path,
+            clip={"x": 0, "y": 0, "width": 2558, "height": 1438},
+            strategy=runner.CAPTURE_STRATEGY_PLAYWRIGHT,
+            jpeg_quality=90,
+        )
+        browser.close()
+
+    assert Image.open(path).size == (2558, 1438)

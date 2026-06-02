@@ -857,6 +857,8 @@ The diagnostics SHALL include at least: navigated URL, browser viewport, device 
 
 The diagnostics SHALL include derived warnings when the observed layout suggests likely partial capture or misleading readiness, including at least: host clip smaller than the contract size, descendant media/canvas larger than the host while host overflow clips, transform applied to the host or media element, descendant media/canvas missing, and readiness true while the primary media/canvas has zero intrinsic dimensions.
 
+When the computed capture clip extends beyond the browser viewport, the runner SHALL still attempt to capture the full clip rather than silently limiting the screenshot to the visible viewport. The diagnostics SHALL warn that the clip exceeds the viewport and that beyond-viewport capture may be slower. Capture timeout budgets remain responsible for bounding pathological large capture regions.
+
 #### Scenario: Successful capture records player layout
 
 - **WHEN** the contestant frontend reaches readiness and the player element is captured
@@ -867,6 +869,12 @@ The diagnostics SHALL include derived warnings when the observed layout suggests
 
 - **WHEN** `[data-testid="player-video"]` is `1280x720` but a descendant canvas is larger than the host and the host clips overflow
 - **THEN** `timestamps.json.layout_diagnostics.warnings` contains a warning indicating that the screenshot may show only part of the rendered canvas
+
+#### Scenario: Capture clip larger than viewport is captured beyond viewport
+
+- **WHEN** the browser viewport is `1280x720` but `[data-testid="player-video"]` lays out to `2558x1438`
+- **THEN** the runner captures a `2558x1438` screenshot when the browser supports beyond-viewport capture
+- **THEN** `layout_diagnostics.warnings` contains a warning that the capture clip exceeds the browser viewport and may be slower
 
 #### Scenario: Readiness timeout still records layout context
 
