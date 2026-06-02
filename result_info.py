@@ -43,6 +43,7 @@ _SCORE_ITEMS: tuple[tuple[str, str | None, str | None, int], ...] = (
 # infrastructure/evaluator failure and rendered with `result=1`.
 CONTESTANT_SIDE_FAILURE_REASONS: frozenset[str] = frozenset({
     "contestant_frontend_unavailable",
+    "contestant_memory_limit_exceeded",
 })
 
 
@@ -117,6 +118,9 @@ def _build_debug_lines(score: dict, run_dir: str | Path | None) -> list[str]:
     reason = score.get("reason")
     if reason:
         lines.append(f"reason={reason}")
+    contestant_memory_limit = score.get("contestant_memory_limit")
+    if contestant_memory_limit:
+        lines.append(f"contestant_memory_limit={contestant_memory_limit}")
 
     for profile_key in ("2k", "4k"):
         block = score.get(profile_key)

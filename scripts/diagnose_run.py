@@ -104,6 +104,10 @@ def stage_timing_section(run_dir: Path) -> str | None:
         return None
     lines = ["Stage timings:"]
     found = False
+    budgets = data.get("budgets") if isinstance(data.get("budgets"), dict) else {}
+    if isinstance(budgets, dict) and budgets.get("contestant_memory_max"):
+        lines.append(f"  Contestant memory limit: {budgets['contestant_memory_max']}")
+        found = True
     for record in data.get("stages") or []:
         if not isinstance(record, dict):
             continue
@@ -153,6 +157,8 @@ def score_section(run_dir: Path) -> str | None:
         lines.append(f"  objective_total: {fmt_value(score['objective_total'])}")
     if score.get("reason"):
         lines.append(f"  reason: {score['reason']}")
+    if score.get("contestant_memory_limit"):
+        lines.append(f"  contestant_memory_limit: {score['contestant_memory_limit']}")
     for profile in sorted(k for k, v in score.items() if isinstance(v, dict)):
         block = score[profile]
         if "measured_fps" in block or "fps_points" in block:

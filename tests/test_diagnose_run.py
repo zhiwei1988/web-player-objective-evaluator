@@ -88,6 +88,25 @@ def test_diagnose_run_reports_stage_timings_and_layout_warnings(tmp_path):
     assert "2k: descendant canvas is larger than clipped host" in report
 
 
+def test_diagnose_run_reports_contestant_memory_limit_metadata(tmp_path):
+    run = tmp_path / "results" / "self_20260521_120000"
+    run.mkdir(parents=True)
+    (run / "score.json").write_text(json.dumps({
+        "objective_total": 0,
+        "reason": "contestant_memory_limit_exceeded",
+        "contestant_memory_limit": "10G",
+    }))
+    (run / "stage_timings.json").write_text(json.dumps({
+        "budgets": {"contestant_memory_max": "10G"},
+        "stages": [],
+    }))
+
+    report = build_report(run, include_host=False)
+
+    assert "contestant_memory_limit: 10G" in report
+    assert "Contestant memory limit: 10G" in report
+
+
 def test_diagnose_run_without_new_diagnostics_is_backward_compatible(tmp_path):
     run = tmp_path / "results" / "self_20260521_120000"
     run.mkdir(parents=True)

@@ -121,3 +121,33 @@ def test_report_renders_stage_timeout_and_layout_warnings(tmp_path):
     assert "Layout diagnostics" in html
     assert "descendant canvas is larger than clipped host" in html
     assert "4k_screenshots/timestamps.json" in html
+
+
+def test_report_renders_contestant_memory_limit_metadata(tmp_path):
+    score = {
+        "objective_total": 0,
+        "max_score": 30,
+        "chromium_version": "test",
+        "reason": "contestant_memory_limit_exceeded",
+        "contestant_memory_limit": "10G",
+        "2k": None,
+        "4k": None,
+        "cpu": {"points": 0, "gated": True, "gate_reason": "host_failure"},
+    }
+    (tmp_path / "stage_timings.json").write_text(json.dumps({
+        "budgets": {"contestant_memory_max": "10G"},
+        "stages": [],
+    }))
+    out = tmp_path / "report.html"
+
+    report.render_report(
+        score=score,
+        profile_metrics={"2k": None, "4k": None},
+        output=out,
+        run_dir=tmp_path,
+    )
+
+    html = out.read_text()
+    assert "contestant memory limit" in html
+    assert "10G" in html
+    assert "contestant_memory_limit_exceeded" in html

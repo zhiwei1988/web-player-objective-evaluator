@@ -19,6 +19,7 @@
 # in sync with CONTESTANT_SIDE_FAILURE_REASONS in result_info.py.
 CONTESTANT_SIDE_REASONS=(
     "contestant_frontend_unavailable"
+    "contestant_memory_limit_exceeded"
 )
 
 # Logging shim: prefer the caller's log() if defined.

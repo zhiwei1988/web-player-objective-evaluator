@@ -50,6 +50,22 @@ def test_build_score_records_sanitized_contestant_feedback_for_contestant_failur
     assert "/home/zhiwei" not in out["contestant_feedback"][1]
 
 
+def test_build_score_records_memory_limit_failure_feedback_and_limit():
+    out = scorer.build_score(
+        {"2k": None, "4k": None},
+        chromium_version="test",
+        failure_reason="contestant_memory_limit_exceeded",
+        contestant_feedback=["Submission exceeded evaluator memory limit of 10G."],
+        contestant_memory_limit="10G",
+    )
+
+    assert out["reason"] == "contestant_memory_limit_exceeded"
+    assert out["contestant_memory_limit"] == "10G"
+    assert out["contestant_feedback"] == [
+        "Submission exceeded evaluator memory limit of 10G."
+    ]
+
+
 def test_build_score_records_profile_failure_feedback_without_global_failure():
     out = scorer.build_score(
         {"2k": None, "4k": None},

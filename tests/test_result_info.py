@@ -330,6 +330,22 @@ def test_contestant_failure_surfaces_raw_reason_in_debug_block():
     assert "contestant_frontend_unavailable" in fields["debug"]
 
 
+def test_memory_limit_failure_is_contestant_side_and_keeps_limit_out_of_info():
+    score = _failure_score("contestant_memory_limit_exceeded")
+    score["contestant_memory_limit"] = "10G"
+    score["contestant_feedback"] = ["Submission exceeded evaluator memory limit of 10G."]
+
+    assert result_info.classify_result_code(score["reason"]) == 0
+    text = result_info.render(score=score, runtime_ms=1, run_dir="/r", result_code=0)
+    fields = _parse_fields(text)
+
+    assert fields["result"] == "0"
+    assert "Submission exceeded evaluator memory limit of 10G." in fields["info"]
+    assert "contestant_memory_limit_exceeded" not in fields["info"]
+    assert "contestant_memory_limit=10G" in fields["debug"]
+    assert "contestant_memory_limit_exceeded" in fields["debug"]
+
+
 # ---------------------------------------------------------------------------
 # 1.4 Infrastructure/evaluator failures
 # ---------------------------------------------------------------------------

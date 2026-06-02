@@ -72,6 +72,9 @@ write_failure_score() {
                 --report "${REPORT_FILE}"
                 --install-prefix "${ROOT_DIR}/third_party/install"
                 --failure-reason "${reason}")
+    if [[ -n "${EVALUATOR_CONTESTANT_MEMORY_MAX_EFFECTIVE:-}" ]]; then
+        args+=(--contestant-memory-limit "${EVALUATOR_CONTESTANT_MEMORY_MAX_EFFECTIVE}")
+    fi
     local feedback
     for feedback in "${HOST_CONTESTANT_FEEDBACK[@]:-}" "${CONTESTANT_FEEDBACK[@]:-}"; do
         [[ -n "${feedback}" ]] && args+=(--contestant-feedback "${feedback}")
@@ -89,6 +92,14 @@ write_failure_score() {
     else
         clx_without_lock_fd "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scorer.py" "${args[@]}" >/dev/null 2>&1 || true
     fi
+}
+
+handle_contestant_memory_limit_failure() {
+    FAILURE_REASON="${CONTESTANT_MEMORY_LIMIT_REASON}"
+    log "contestant exceeded memory limit (${EVALUATOR_CONTESTANT_MEMORY_MAX_EFFECTIVE:-10G})"
+    clx_record_contestant_memory_feedback
+    write_failure_score "${FAILURE_REASON}"
+    exit 2
 }
 
 stop_mediamtx() {
@@ -130,6 +141,10 @@ cleanup() {
 
 clx_acquire_lock
 clx_prepare_run_dir "${TEAM_ID}"
+if ! clx_load_contestant_memory_limit; then
+    FAILURE_REASON="contestant memory limiter configuration invalid"
+    exit 1
+fi
 stg_load_timeout_budgets
 stg_init_stage_timings
 
@@ -153,11 +168,20 @@ for bin in ffmpeg mediamtx tesseract; do
     fi
 done
 
+if ! clx_preflight_contestant_memory_limiter; then
+    FAILURE_REASON="contestant memory limiter unavailable"
+    log "${FAILURE_REASON}"
+    exit 1
+fi
+
 clx_precheck_ports 8080
 clx_extract_submission "${SUBMISSION_ZIP}"
 clx_start_contestant
 
 if ! clx_wait_frontend_ready; then
+    if clx_contestant_memory_limit_exceeded; then
+        handle_contestant_memory_limit_failure
+    fi
     FAILURE_REASON="contestant_frontend_unavailable"
     log "contestant frontend never became ready"
     clx_collect_contestant_log_feedback \
@@ -223,6 +247,14 @@ run_capture() {
     if [[ "${rc}" == "0" ]]; then
         return 0
     fi
+    if clx_contestant_memory_limit_exceeded; then
+        local memory_reason="${CONTESTANT_MEMORY_LIMIT_REASON}"
+        log "  ${profile} runner stopped after contestant exceeded memory limit"
+        PROFILE_REASON[${profile}]="${memory_reason}"
+        CONTESTANT_FEEDBACK+=("${profile}: $(clx_contestant_memory_feedback_line)")
+        FAILURE_REASON="${memory_reason}"
+        return 2
+    fi
     if [[ "${rc}" == "124" || "${rc}" == "137" ]]; then
         local timeout_reason="capture timeout after ${EVALUATOR_CAPTURE_TIMEOUT_SECONDS}s"
         log "  ${profile} runner timed out: ${timeout_reason}"
@@ -272,12 +304,21 @@ for profile in "${PROFILES_TO_RUN[@]}"; do
     metrics_path="${RUN_DIR}/${profile}_metrics.json"
     METRICS_PATH[${profile}]="${metrics_path}"
     run_capture "${profile}" "${shots_dir}" || true
+    if [[ "${FAILURE_REASON:-}" == "${CONTESTANT_MEMORY_LIMIT_REASON}" ]]; then
+        handle_contestant_memory_limit_failure
+    fi
     analyze_profile "${profile}" "${shots_dir}" "${metrics_path}" || true
+    if clx_contestant_memory_limit_exceeded; then
+        handle_contestant_memory_limit_failure
+    fi
 done
 
 # Score + report.
 SCORER_ARGS=(--output "${SCORE_FILE}" --report "${REPORT_FILE}"
              --install-prefix "${ROOT_DIR}/third_party/install")
+if [[ -n "${EVALUATOR_CONTESTANT_MEMORY_MAX_EFFECTIVE:-}" ]]; then
+    SCORER_ARGS+=(--contestant-memory-limit "${EVALUATOR_CONTESTANT_MEMORY_MAX_EFFECTIVE}")
+fi
 for profile in "${PROFILES_TO_RUN[@]}"; do
     metrics_path="${METRICS_PATH[${profile}]:-}"
     [[ -n "${metrics_path}" && -f "${metrics_path}" ]] && SCORER_ARGS+=(--metrics "${profile}=${metrics_path}")

@@ -89,6 +89,7 @@ CPU_MIN_SAMPLES: int = 3
 
 CONTESTANT_SIDE_FAILURE_REASONS: frozenset[str] = frozenset({
     "contestant_frontend_unavailable",
+    "contestant_memory_limit_exceeded",
 })
 """Top-level failure reasons whose feedback can be shown to contestants."""
 
@@ -395,6 +396,7 @@ def build_score(
     per_round_reasons: dict | None = None,
     cpu_override_reason: str | None = None,
     contestant_feedback: list[str] | None = None,
+    contestant_memory_limit: str | None = None,
 ) -> dict:
     out: dict = {
         "max_score": 30,
@@ -407,6 +409,8 @@ def build_score(
 
     if failure_reason:
         out["reason"] = failure_reason
+    if contestant_memory_limit:
+        out["contestant_memory_limit"] = contestant_memory_limit
 
     feedback = normalize_contestant_feedback(contestant_feedback)
     if feedback and _allows_contestant_feedback(failure_reason, per_round_reasons):
@@ -523,6 +527,8 @@ def _cli() -> int:
     p.add_argument("--contestant-feedback", action="append", default=[],
                    help="Candidate contestant-facing execution feedback line. "
                         "Repeat to pass bounded log tails or capture reasons.")
+    p.add_argument("--contestant-memory-limit", type=str, default=None,
+                   help="Effective contestant process-tree memory limit used for this run.")
     p.add_argument("--cpu-override-reason", type=str, default=None,
                    help="Force a gate_reason in the cpu block (used by the host "
                         "container wrapper to flag container_mode_unsupported).")
@@ -549,6 +555,7 @@ def _cli() -> int:
         per_round_reasons=per_round_reasons,
         cpu_override_reason=args.cpu_override_reason,
         contestant_feedback=args.contestant_feedback,
+        contestant_memory_limit=args.contestant_memory_limit,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(score, indent=2))

@@ -251,6 +251,28 @@ def test_contestant_side_failure_publishes_with_result_zero(tmp_path):
     assert "contestant_frontend_unavailable" in content.split("|debug|")[1]
 
 
+def test_memory_limit_failure_publishes_with_result_zero_and_feedback(tmp_path):
+    run_dir, uploads_dir, _, proc = _drive_write_result_info(
+        tmp_path=tmp_path,
+        score={
+            **_failure_score_json(
+                "contestant_memory_limit_exceeded",
+                contestant_feedback=["Submission exceeded evaluator memory limit of 10G."],
+            ),
+            "contestant_memory_limit": "10G",
+        },
+        failure_reason="contestant_memory_limit_exceeded",
+        result_code_arg="",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    content = (run_dir / "result.info").read_text()
+    assert (uploads_dir / "result.info").read_text() == content
+    assert "|result|0" in content
+    assert "Submission exceeded evaluator memory limit of 10G." in content
+    assert "contestant_memory_limit=10G" in content
+
+
 def test_contestant_side_feedback_is_published_identically(tmp_path):
     run_dir, uploads_dir, _, proc = _drive_write_result_info(
         tmp_path=tmp_path,

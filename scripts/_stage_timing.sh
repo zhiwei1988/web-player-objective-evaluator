@@ -34,6 +34,9 @@ data = {
         "analysis_timeout_seconds": int(os.environ["EVALUATOR_ANALYSIS_TIMEOUT_SECONDS"]),
         "score_timeout_seconds": int(os.environ["EVALUATOR_SCORE_TIMEOUT_SECONDS"]),
         "total_timeout_seconds": int(os.environ["EVALUATOR_TOTAL_TIMEOUT_SECONDS"]),
+        "contestant_memory_max": os.environ.get("EVALUATOR_CONTESTANT_MEMORY_MAX_EFFECTIVE")
+            or os.environ.get("EVALUATOR_CONTESTANT_MEMORY_MAX")
+            or "10G",
     },
     "stages": [],
 }

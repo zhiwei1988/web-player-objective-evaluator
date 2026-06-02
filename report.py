@@ -176,6 +176,8 @@ def _stage_diagnostics_section(run_dir: Path) -> str:
     data = _read_json(run_dir / "stage_timings.json")
     if not data:
         return ""
+    budgets = data.get("budgets") if isinstance(data.get("budgets"), dict) else {}
+    memory_limit = budgets.get("contestant_memory_max") if isinstance(budgets, dict) else None
     rows = []
     for record in data.get("stages") or []:
         if not isinstance(record, dict):
@@ -199,11 +201,16 @@ def _stage_diagnostics_section(run_dir: Path) -> str:
             f"<td>{html.escape(reason)}</td>"
             "</tr>"
         )
-    if not rows:
+    if not rows and not memory_limit:
         return ""
+    memory_limit_html = (
+        f'<p>contestant memory limit: <code>{html.escape(str(memory_limit))}</code></p>'
+        if memory_limit else ""
+    )
     return f'''
 <section>
   <h2>Stage diagnostics</h2>
+  {memory_limit_html}
   <table>
     <tr><th>stage</th><th>status</th><th>timeout</th><th>duration</th><th>reason</th></tr>
     {''.join(rows)}
@@ -419,6 +426,15 @@ def render_report(
     summary_rows = []
     if gate:
         summary_rows.append(gate_summary_row())
+    contestant_memory_limit = score.get("contestant_memory_limit")
+    if not contestant_memory_limit:
+        stage_data = _read_json(run_dir / "stage_timings.json") or {}
+        budgets = stage_data.get("budgets") if isinstance(stage_data.get("budgets"), dict) else {}
+        contestant_memory_limit = (budgets or {}).get("contestant_memory_max")
+    if contestant_memory_limit:
+        summary_rows.append(
+            f'<tr><th>contestant memory limit</th><td><code>{html.escape(str(contestant_memory_limit))}</code></td></tr>'
+        )
     artifact_links = []
     for profile in sorted(PROFILES.keys()):
         label = profile_labels.get(profile, f"{profile} profile")
