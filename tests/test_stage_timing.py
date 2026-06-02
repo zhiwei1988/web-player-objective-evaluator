@@ -175,3 +175,37 @@ def test_stage_record_recreates_missing_stage_timings_file(tmp_path: Path) -> No
     data = json.loads((run_dir / "stage_timings.json").read_text())
     assert data["budgets"]["capture_timeout_seconds"] == 120
     assert [r["status"] for r in data["stages"]] == ["running", "success"]
+
+
+def test_total_watchdog_stop_reaps_sleep_child(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    harness = textwrap.dedent(
+        f"""\
+        set -uo pipefail
+        source {str(HELPER)!r}
+        RUN_DIR={str(run_dir)!r}
+        mkdir -p "${{RUN_DIR}}"
+        EVALUATOR_TOTAL_TIMEOUT_SECONDS=30
+        stg_load_timeout_budgets
+        stg_init_stage_timings
+        stg_start_total_watchdog
+        watchdog="${{STG_TOTAL_WATCHDOG_PID}}"
+        sleep 0.2
+        child_pids="$(pgrep -P "${{watchdog}}" || true)"
+        printf 'watchdog=%s child_pids=%s\\n' "${{watchdog}}" "${{child_pids}}"
+        stg_stop_total_watchdog
+        sleep 0.2
+        for pid in ${{child_pids}}; do
+            if kill -0 "${{pid}}" 2>/dev/null; then
+                printf 'leftover_child=%s %s\\n' "${{pid}}" "$(ps -o comm= -p "${{pid}}" 2>/dev/null || true)"
+                kill "${{pid}}" 2>/dev/null || true
+            fi
+        done
+        """
+    )
+
+    proc = _run_harness(harness, tmp_path)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "child_pids=" in proc.stdout
+    assert "leftover_child=" not in proc.stdout

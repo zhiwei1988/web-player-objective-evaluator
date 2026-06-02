@@ -223,7 +223,19 @@ stg_start_total_watchdog() {
     [[ -n "${EVALUATOR_TOTAL_TIMEOUT_SECONDS:-}" ]] || return 0
     local parent_pid="$$"
     (
-        sleep "${EVALUATOR_TOTAL_TIMEOUT_SECONDS}"
+        sleep_pid=""
+        cleanup_watchdog_sleep() {
+            if [[ -n "${sleep_pid:-}" ]]; then
+                kill "${sleep_pid}" 2>/dev/null || true
+                wait "${sleep_pid}" 2>/dev/null || true
+            fi
+        }
+        trap cleanup_watchdog_sleep EXIT INT TERM
+        sleep "${EVALUATOR_TOTAL_TIMEOUT_SECONDS}" &
+        sleep_pid="$!"
+        wait "${sleep_pid}" || exit 0
+        sleep_pid=""
+        trap - EXIT INT TERM
         STAGE_TIMINGS_FILE="${RUN_DIR}/stage_timings.json"
         stg_record_stage "timeout" "evaluator_body" "" "${EVALUATOR_TOTAL_TIMEOUT_SECONDS}" "" "evaluator total timeout after ${EVALUATOR_TOTAL_TIMEOUT_SECONDS}s"
         kill -TERM "${parent_pid}" 2>/dev/null || true
