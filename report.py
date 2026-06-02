@@ -252,6 +252,29 @@ def _layout_diagnostics_section(profile: str, run_dir: Path) -> str:
 '''
 
 
+def _capture_status_section(profile: str, run_dir: Path) -> str:
+    status = _read_json(run_dir / f"{profile}_screenshots" / "capture_status.json")
+    if not isinstance(status, dict):
+        return ""
+    phase = str(status.get("phase") or "?")
+    detail = status.get("detail")
+    detail_html = ""
+    if isinstance(detail, dict) and detail:
+        detail_html = (
+            "<tr><th>detail</th><td><code>"
+            f"{html.escape(json.dumps(detail, ensure_ascii=False, sort_keys=True))}"
+            "</code></td></tr>"
+        )
+    return f'''
+  <h3>Capture status</h3>
+  <table>
+    <tr><th>phase</th><td>{html.escape(phase)}</td></tr>
+    {detail_html}
+  </table>
+  <p><a href="{profile}_screenshots/capture_status.json">capture_status.json</a></p>
+'''
+
+
 def render_report(
     *,
     score: dict,
@@ -265,7 +288,14 @@ def render_report(
         profile_score = score.get(profile) or {}
         metrics = profile_metrics.get(profile)
         if not profile_score:
-            return f'<section><h2>{label}</h2><p>not scored</p></section>'
+            return f'''
+<section>
+  <h2>{label}</h2>
+  <p>not scored</p>
+  {_capture_status_section(profile, run_dir)}
+  {_layout_diagnostics_section(profile, run_dir)}
+</section>
+'''
         # Partial profile_score blocks (failure cases) only carry `reason`; render
         # what we have and bail out of the metrics-dependent rows.
         if "correctness_points" not in profile_score:
@@ -275,6 +305,7 @@ def render_report(
   <table>
     <tr><th>reason</th><td>{html.escape(profile_score.get("reason") or "")}</td></tr>
   </table>
+  {_capture_status_section(profile, run_dir)}
   {_layout_diagnostics_section(profile, run_dir)}
 </section>
 '''
@@ -334,6 +365,7 @@ def render_report(
     <tr><th>mean SSIM</th><td>{profile_score["mean_ssim"]:.3f}</td></tr>
     <tr><th>reason</th><td>{html.escape(profile_score.get("reason") or "")}</td></tr>
   </table>
+  {_capture_status_section(profile, run_dir)}
   {_layout_diagnostics_section(profile, run_dir)}
   {_capture_diagnostics_table(metrics or {})}
   {_frame_number_svg(frame_numbers, f"{label}: frame number over time")}

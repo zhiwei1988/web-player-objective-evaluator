@@ -853,6 +853,8 @@ The evaluator SHALL write a run-level machine-readable stage timing artifact und
 
 `runner.py` SHALL write structured capture layout diagnostics into each profile's `timestamps.json`. After readiness, once the final capture clip and layout diagnostics have been computed, `runner.py` SHALL also immediately write the same diagnostic payload to `layout_diagnostics.json` in the profile screenshot directory before entering the steady-state screenshot loop. The diagnostics SHALL be collected at least after readiness and before the steady-state screenshot loop, and SHALL be collected on readiness timeout when the page is reachable. The diagnostics SHALL be bounded and SHALL NOT dump the full DOM.
 
+`runner.py` SHALL write a profile-level `capture_status.json` artifact as soon as the runner starts and SHALL update it at key capture phases before operations that can block or time out. The status artifact SHALL include at least profile, phase, update epoch, and optional bounded detail. Phases SHALL cover at least browser launch, context/page creation, navigation, readiness waiting, player element lookup, clip computation, layout diagnostics writing, screenshot loop start, screenshot loop completion, and terminal early-failure phases such as browser launch failure, navigation timeout/failure, readiness timeout, missing player, invalid clip, interruption, and completion.
+
 The diagnostics SHALL include at least: navigated URL, browser viewport, device pixel ratio, page scroll offsets, `document.readyState`, `window.__PLAYER_READY__`, `window.__PLAYER_ERROR__`, the final capture clip, the `[data-testid="player-video"]` host element bounding box and client/scroll/offset dimensions, selected host computed styles relevant to clipping and scaling, and a bounded list of descendant `<canvas>` and `<video>` elements with their bounding boxes, client dimensions, intrinsic media/canvas dimensions, IDs, data-testid values, and selected computed styles.
 
 The diagnostics SHALL include derived warnings when the observed layout suggests likely partial capture or misleading readiness, including at least: host clip smaller than the contract size, descendant media/canvas larger than the host while host overflow clips, transform applied to the host or media element, descendant media/canvas missing, and readiness true while the primary media/canvas has zero intrinsic dimensions.
@@ -864,6 +866,13 @@ When the computed capture clip extends beyond the browser viewport, the runner S
 - **WHEN** the contestant frontend reaches readiness and the player element is captured
 - **THEN** `timestamps.json` contains `layout_diagnostics` with viewport, device pixel ratio, player host metrics, final clip, and a bounded list of descendant media/canvas metrics
 - **THEN** `<profile>_screenshots/layout_diagnostics.json` contains the same diagnostic payload before the steady-state screenshot loop begins
+- **THEN** `<profile>_screenshots/capture_status.json` records a later phase such as `screenshot_loop_started`, `screenshot_loop_finished`, or `completed`
+
+#### Scenario: Early navigation timeout records phase context
+
+- **WHEN** `runner.py` times out while navigating to the contestant player before readiness starts
+- **THEN** `<profile>_screenshots/capture_status.json` records phase `navigation_timeout`
+- **THEN** `<profile>_screenshots/timestamps.json` records reason `navigation timeout`
 
 #### Scenario: Oversized canvas inside clipped host is flagged
 
@@ -888,7 +897,7 @@ When the computed capture clip extends beyond the browser viewport, the runner S
 
 ### Requirement: Runtime Diagnostics Surfacing
 
-The evaluator SHALL surface stage timing, timeout, and capture layout diagnostics in organizer-facing artifacts without changing contestant-facing scoring semantics. `report.html` SHALL include a compact per-profile diagnostic summary and links to raw diagnostic artifacts. `scripts/diagnose_run.py` SHALL include stage timing and layout warning summaries when those artifacts are present, while continuing to handle older result directories where the new fields are absent. When `timestamps.json` is absent or lacks `layout_diagnostics`, organizer-facing diagnostics SHALL fall back to the standalone `<profile>_screenshots/layout_diagnostics.json` artifact when present.
+The evaluator SHALL surface stage timing, timeout, capture status, and capture layout diagnostics in organizer-facing artifacts without changing contestant-facing scoring semantics. `report.html` SHALL include a compact per-profile diagnostic summary and links to raw diagnostic artifacts. `scripts/diagnose_run.py` SHALL include stage timing, capture status, and layout warning summaries when those artifacts are present, while continuing to handle older result directories where the new fields are absent. When `timestamps.json` is absent or lacks `layout_diagnostics`, organizer-facing diagnostics SHALL fall back to the standalone `<profile>_screenshots/layout_diagnostics.json` artifact when present.
 
 `result.info` SHALL remain concise. It MAY include timeout/profile reasons and high-signal debug summaries, but SHALL NOT expose full layout diagnostics or internal browser logs as contestant-facing information.
 

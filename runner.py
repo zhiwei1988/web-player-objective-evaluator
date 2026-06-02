@@ -88,6 +88,7 @@ def run_capture(
     result.capture_strategy = _resolve_capture_strategy(capture_strategy)
     result.jpeg_quality = DEFAULT_JPEG_QUALITY
     url = f"http://localhost:{FRONTEND_PORT}/play?profile={profile}&autoplay=1"
+    _write_capture_status(output, profile=profile, phase="runner_started", detail={"url": url})
 
     with sync_playwright() as p:
         # Fresh browser per codec — never reuse contexts to avoid state bleed.
@@ -113,21 +114,28 @@ def run_capture(
             ],
         )
         browser = None
+        _write_capture_status(output, profile=profile, phase="browser_launching", detail={"channel": "chrome"})
         try:
             browser = p.chromium.launch(channel="chrome", **launch_args)
         except PlaywrightError as exc:
             chrome_err = str(exc)
+            _write_capture_status(output, profile=profile, phase="browser_launching", detail={"channel": "chromium"})
             try:
                 browser = p.chromium.launch(**launch_args)
             except PlaywrightError as exc2:
                 result.reason = (
                     f"browser launch failed: chrome={chrome_err}; chromium={exc2}"
                 )
+                _write_capture_status(output, profile=profile, phase="browser_launch_failed", detail={"reason": result.reason})
+                _write_timestamps(output, result)
                 return result
 
         result.chromium_version = browser.version
+        _write_capture_status(output, profile=profile, phase="browser_launched", detail={"chromium_version": result.chromium_version})
         context = browser.new_context(viewport=CAPTURE_VIEWPORT)
+        _write_capture_status(output, profile=profile, phase="context_created", detail={"viewport": CAPTURE_VIEWPORT})
         page = context.new_page()
+        _write_capture_status(output, profile=profile, phase="page_created")
 
         page.on("pageerror", lambda exc: result.browser_errors.append(f"pageerror: {exc}"))
         page.on(
@@ -156,26 +164,34 @@ def run_capture(
 
         # Decode-path forensics (best-effort, installed before navigation).
         _install_forensics(context, page, collector)
+        _write_capture_status(output, profile=profile, phase="forensics_installed")
 
         try:
             # NEVER networkidle — streaming apps keep network busy forever.
+            _write_capture_status(output, profile=profile, phase="navigating", detail={"url": url})
             page.goto(url, wait_until="domcontentloaded", timeout=30_000)
         except PlaywrightTimeout:
             result.reason = "navigation timeout"
+            _write_capture_status(output, profile=profile, phase="navigation_timeout", detail={"url": url})
+            _write_timestamps(output, result)
             browser.close()
             return result
         except PlaywrightError as exc:
             result.reason = f"navigation failed: {exc}"
+            _write_capture_status(output, profile=profile, phase="navigation_failed", detail={"url": url, "reason": result.reason})
+            _write_timestamps(output, result)
             browser.close()
             return result
 
         # Wait for the contract handshake.
         try:
+            _write_capture_status(output, profile=profile, phase="waiting_ready", detail={"timeout_s": READY_TIMEOUT_S})
             page.wait_for_function(
                 "window.__PLAYER_READY__ === true",
                 timeout=READY_TIMEOUT_S * 1000,
             )
         except PlaywrightTimeout:
+            _write_capture_status(output, profile=profile, phase="readiness_timeout", detail={"timeout_s": READY_TIMEOUT_S})
             err = page.evaluate("window.__PLAYER_ERROR__ || null")
             # Full diagnostic snapshot — we cannot guess from a single error string
             # why the player never fired __PLAYER_READY__.
@@ -234,9 +250,11 @@ def run_capture(
             _write_timestamps(output, result)
             browser.close()
             return result
+        _write_capture_status(output, profile=profile, phase="ready")
 
         # Element must exist after readiness — never silently capture something else.
         try:
+            _write_capture_status(output, profile=profile, phase="player_visible_wait", detail={"selector": PLAYER_SELECTOR, "timeout_ms": 5000})
             locator = page.locator(PLAYER_SELECTOR)
             locator.wait_for(state="visible", timeout=5000)
             bbox = locator.bounding_box()
@@ -244,6 +262,7 @@ def run_capture(
                 raise PlaywrightTimeout("bounding_box returned None")
         except PlaywrightTimeout:
             result.reason = "missing data-testid=player-video"
+            _write_capture_status(output, profile=profile, phase="player_missing", detail={"selector": PLAYER_SELECTOR})
             _write_timestamps(output, result)
             browser.close()
             return result
@@ -263,12 +282,15 @@ def run_capture(
         except PlayerClipTooSmall as exc:
             result.reason = str(exc)
             result.clip = clip
+            _write_capture_status(output, profile=profile, phase="clip_invalid", detail={"clip": clip, "reason": result.reason})
             _write_timestamps(output, result)
             browser.close()
             return result
         result.clip = clip
+        _write_capture_status(output, profile=profile, phase="clip_computed", detail={"clip": clip})
         result.layout_diagnostics = _collect_layout_diagnostics(page, clip)
         _write_layout_diagnostics(output, result)
+        _write_capture_status(output, profile=profile, phase="layout_diagnostics_written", detail={"path": "layout_diagnostics.json"})
 
         # Capture loop. JPEG quality=90 is visually indistinguishable from PNG
         # for our watermarked test pattern but encodes ~3x faster, which is
@@ -302,6 +324,7 @@ def run_capture(
             )
             sampler.start()
         result.capture_started_at_epoch = time.time()
+        _write_capture_status(output, profile=profile, phase="screenshot_loop_started", detail={"target_frames": int(round(duration_s * fps)), "fps": fps, "duration_s": duration_s})
 
         interval = 1.0 / fps
         n_frames = int(round(duration_s * fps))
@@ -332,6 +355,7 @@ def run_capture(
                     next_deadline += interval
             except KeyboardInterrupt:
                 result.reason = "interrupted"
+                _write_capture_status(output, profile=profile, phase="interrupted")
                 browser.close()
                 _write_timestamps(output, result)
                 return result
@@ -352,10 +376,12 @@ def run_capture(
                     "errors": [f"collector: {exc}"],
                 }
             _write_decode_forensics(output, result)
+            _write_capture_status(output, profile=profile, phase="screenshot_loop_finished", detail={"captured_timestamps": len(result.timestamps)})
 
         browser.close()
 
     result.success = True
+    _write_capture_status(output, profile=profile, phase="completed", detail={"captured_timestamps": len(result.timestamps)})
     _write_timestamps(output, result)
     return result
 
@@ -872,6 +898,26 @@ def _write_layout_diagnostics(output: Path, result: CaptureResult) -> None:
     path = output / "layout_diagnostics.json"
     tmp = output / ".layout_diagnostics.json.tmp"
     tmp.write_text(json.dumps(diagnostics, indent=2))
+    tmp.replace(path)
+
+
+def _write_capture_status(
+    output: Path,
+    *,
+    profile: str,
+    phase: str,
+    detail: dict | None = None,
+) -> None:
+    payload = {
+        "profile": profile,
+        "phase": phase,
+        "updated_at_epoch": time.time(),
+    }
+    if detail:
+        payload["detail"] = detail
+    path = output / "capture_status.json"
+    tmp = output / ".capture_status.json.tmp"
+    tmp.write_text(json.dumps(payload, indent=2))
     tmp.replace(path)
 
 

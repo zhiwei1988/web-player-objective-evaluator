@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 from playwright.sync_api import Error as PlaywrightError, sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 import runner
 from lib import decode_forensics as _forensics
@@ -157,6 +158,107 @@ def test_write_layout_diagnostics_noop_when_absent(tmp_path):
     runner._write_layout_diagnostics(tmp_path, result)
 
     assert not (tmp_path / "layout_diagnostics.json").exists()
+
+
+def test_write_capture_status_overwrites_phase_atomically(tmp_path):
+    runner._write_capture_status(tmp_path, profile="2k", phase="browser_launching")
+    runner._write_capture_status(tmp_path, profile="2k", phase="navigating", detail={"url": "http://localhost:8080/play"})
+
+    out = json.loads((tmp_path / "capture_status.json").read_text())
+    assert out["profile"] == "2k"
+    assert out["phase"] == "navigating"
+    assert out["detail"] == {"url": "http://localhost:8080/play"}
+    assert isinstance(out["updated_at_epoch"], float)
+    assert not (tmp_path / ".capture_status.json.tmp").exists()
+
+
+class _FakeMediaSession:
+    def send(self, method):
+        assert method == "Media.enable"
+
+    def on(self, event, callback):
+        assert event == "Media.playerPropertiesChanged"
+
+
+class _FakeBrowserPage:
+    def __init__(self, goto_error=None):
+        self.goto_error = goto_error
+        self.handlers = {}
+
+    def on(self, event, callback):
+        self.handlers[event] = callback
+
+    def expose_function(self, name, callback):
+        assert name == "__forensicReport"
+
+    def goto(self, url, wait_until, timeout):
+        assert wait_until == "domcontentloaded"
+        assert timeout == 30_000
+        if self.goto_error:
+            raise self.goto_error
+
+
+class _FakeBrowserContext:
+    def __init__(self, page):
+        self.page = page
+
+    def new_page(self):
+        return self.page
+
+    def add_init_script(self, script):
+        assert script
+
+    def new_cdp_session(self, page):
+        return _FakeMediaSession()
+
+
+class _FakeBrowser:
+    version = "fake-chrome"
+
+    def __init__(self, page):
+        self.page = page
+        self.closed = False
+
+    def new_context(self, viewport):
+        assert viewport == runner.CAPTURE_VIEWPORT
+        return _FakeBrowserContext(self.page)
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeChromium:
+    def __init__(self, page):
+        self.page = page
+
+    def launch(self, **kwargs):
+        return _FakeBrowser(self.page)
+
+
+class _FakePlaywright:
+    def __init__(self, page):
+        self.chromium = _FakeChromium(page)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+def test_run_capture_navigation_timeout_writes_artifacts(tmp_path, monkeypatch):
+    page = _FakeBrowserPage(goto_error=PlaywrightTimeout("navigation timed out"))
+    monkeypatch.setattr(runner, "sync_playwright", lambda: _FakePlaywright(page))
+
+    result = runner.run_capture("2k", tmp_path, duration_s=30, fps=20)
+
+    assert result.success is False
+    assert result.reason == "navigation timeout"
+    status = json.loads((tmp_path / "capture_status.json").read_text())
+    assert status["phase"] == "navigation_timeout"
+    timestamps = json.loads((tmp_path / "timestamps.json").read_text())
+    assert timestamps["reason"] == "navigation timeout"
+    assert timestamps["contestant_feedback"] == ["navigation timeout"]
 
 
 def test_layout_warning_for_oversized_canvas_in_clipped_host():

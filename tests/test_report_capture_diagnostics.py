@@ -151,6 +151,37 @@ def test_report_reads_standalone_layout_diagnostics_when_timestamps_missing(tmp_
     assert "2k_screenshots/layout_diagnostics.json" in html
 
 
+def test_report_renders_capture_status(tmp_path):
+    score = {
+        "objective_total": 0,
+        "max_score": 30,
+        "chromium_version": "test",
+        "2k": {"reason": "capture timeout after 120s"},
+        "4k": None,
+        "cpu": {"points": 0, "gated": True, "gate_reason": "2k_round_failed"},
+    }
+    shots = tmp_path / "2k_screenshots"
+    shots.mkdir()
+    (shots / "capture_status.json").write_text(json.dumps({
+        "profile": "2k",
+        "phase": "navigating",
+        "detail": {"url": "http://localhost:8080/play?profile=2k&autoplay=1"},
+    }))
+    out = tmp_path / "report.html"
+
+    report.render_report(
+        score=score,
+        profile_metrics={"2k": None, "4k": None},
+        output=out,
+        run_dir=tmp_path,
+    )
+
+    html = out.read_text()
+    assert "Capture status" in html
+    assert "navigating" in html
+    assert "2k_screenshots/capture_status.json" in html
+
+
 def test_report_renders_contestant_memory_limit_metadata(tmp_path):
     score = {
         "objective_total": 0,

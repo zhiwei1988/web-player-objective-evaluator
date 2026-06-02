@@ -102,6 +102,23 @@ def test_diagnose_run_reads_standalone_layout_diagnostics_when_timestamps_missin
     assert "2k: canvas element is larger than clipped host" in report
 
 
+def test_diagnose_run_reports_capture_status(tmp_path):
+    run = tmp_path / "results" / "self_20260521_120000"
+    shots = run / "2k_screenshots"
+    shots.mkdir(parents=True)
+    (shots / "capture_status.json").write_text(json.dumps({
+        "profile": "2k",
+        "phase": "navigating",
+        "detail": {"url": "http://localhost:8080/play?profile=2k&autoplay=1"},
+    }))
+
+    report = build_report(run, include_host=False)
+
+    assert "Capture status:" in report
+    assert "2k: navigating" in report
+    assert "http://localhost:8080/play?profile=2k&autoplay=1" in report
+
+
 def test_diagnose_run_reports_contestant_memory_limit_metadata(tmp_path):
     run = tmp_path / "results" / "self_20260521_120000"
     run.mkdir(parents=True)

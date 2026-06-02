@@ -157,6 +157,25 @@ def layout_warning_section(run_dir: Path) -> str | None:
     return "\n".join(lines) if found else None
 
 
+def capture_status_section(run_dir: Path) -> str | None:
+    lines = ["Capture status:"]
+    found = False
+    for status_path in sorted(run_dir.glob("*_screenshots/capture_status.json")):
+        profile = status_path.parent.name.removesuffix("_screenshots")
+        try:
+            data = load_json(status_path)
+        except Exception:
+            continue
+        phase = data.get("phase") or "?"
+        detail = data.get("detail")
+        parts = [f"  {profile}: {phase}"]
+        if isinstance(detail, dict) and detail:
+            parts.append(json.dumps(detail, ensure_ascii=False, sort_keys=True))
+        lines.append(" ".join(parts))
+        found = True
+    return "\n".join(lines) if found else None
+
+
 def score_section(run_dir: Path) -> str | None:
     score_path = run_dir / "score.json"
     if not score_path.exists():
@@ -246,6 +265,9 @@ def build_report(run_dir: Path, include_host: bool = True, root: Path = ROOT) ->
     stage_timings = stage_timing_section(run_dir)
     if stage_timings:
         sections.append(stage_timings)
+    capture_status = capture_status_section(run_dir)
+    if capture_status:
+        sections.append(capture_status)
     layout_warnings = layout_warning_section(run_dir)
     if layout_warnings:
         sections.append(layout_warnings)
