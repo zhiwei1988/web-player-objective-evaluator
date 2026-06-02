@@ -49,6 +49,7 @@ case "${UBUNTU_VERSION}" in
             python3.12
             python3.12-venv
             python3.12-dev
+            python3-pip
         )
         VENV_PYTHON="python3.12"
         NEED_PPAS=1
@@ -188,6 +189,17 @@ make_venv() {
     "${REPO_ROOT}/.venv/bin/python" -m pip install --upgrade pip wheel
 }
 
+# PyPI mirror for pip install during build.sh (playwright pin is not on some
+# corporate mirrors). Idempotent: pip config set overwrites the same key.
+configure_pip_index() {
+    local pip="${REPO_ROOT}/.venv/bin/pip"
+    [[ -x "${pip}" ]] || die ".venv pip not found; create .venv first"
+    local index_url="https://pypi.tuna.tsinghua.edu.cn/simple"
+    log "pip index-url -> ${index_url}"
+    "${pip}" config set global.index-url "${index_url}"
+    "${pip}" config set global.trusted-host "pypi.tuna.tsinghua.edu.cn"
+}
+
 # 3) Submodules.
 init_submodules() {
     log "initializing git submodules"
@@ -199,6 +211,7 @@ main() {
     install_apt
     ensure_go_on_path
     make_venv
+    configure_pip_index
     init_submodules
     printf 'setup ok\n'
 }
