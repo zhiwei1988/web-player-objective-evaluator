@@ -94,6 +94,55 @@ def profile_sections(run_dir: Path) -> list[str]:
     return sections
 
 
+def stage_timing_section(run_dir: Path) -> str | None:
+    path = run_dir / "stage_timings.json"
+    if not path.exists():
+        return None
+    try:
+        data = load_json(path)
+    except Exception:
+        return None
+    lines = ["Stage timings:"]
+    found = False
+    for record in data.get("stages") or []:
+        if not isinstance(record, dict):
+            continue
+        stage = record.get("stage") or "?"
+        profile = record.get("profile")
+        label = f"{stage}[{profile}]" if profile else str(stage)
+        status = record.get("status") or "?"
+        duration = record.get("duration_s")
+        timeout = record.get("timeout_seconds")
+        reason = record.get("reason")
+        parts = [f"  {label}: {status}"]
+        if isinstance(duration, (int, float)):
+            parts.append(f"duration={duration:.2f}s")
+        if timeout not in (None, ""):
+            parts.append(f"timeout={timeout}s")
+        if reason:
+            parts.append(str(reason))
+        lines.append(" ".join(parts))
+        found = True
+    return "\n".join(lines) if found else None
+
+
+def layout_warning_section(run_dir: Path) -> str | None:
+    lines = ["Layout warnings:"]
+    found = False
+    for ts_path in sorted(run_dir.glob("*_screenshots/timestamps.json")):
+        profile = ts_path.parent.name.removesuffix("_screenshots")
+        try:
+            data = load_json(ts_path)
+        except Exception:
+            continue
+        layout = data.get("layout_diagnostics") or {}
+        warnings = layout.get("warnings") or []
+        for warning in warnings:
+            lines.append(f"  {profile}: {warning}")
+            found = True
+    return "\n".join(lines) if found else None
+
+
 def score_section(run_dir: Path) -> str | None:
     score_path = run_dir / "score.json"
     if not score_path.exists():
@@ -178,6 +227,12 @@ def build_report(run_dir: Path, include_host: bool = True, root: Path = ROOT) ->
         sections.extend(profiles)
     else:
         sections.append("No *_metrics.json files found.")
+    stage_timings = stage_timing_section(run_dir)
+    if stage_timings:
+        sections.append(stage_timings)
+    layout_warnings = layout_warning_section(run_dir)
+    if layout_warnings:
+        sections.append(layout_warnings)
     if include_host:
         sections.append(host_section(root))
     return "\n\n".join(sections)

@@ -38,6 +38,8 @@ source "${SCRIPT_DIR}/env.sh"
 source "${SCRIPT_DIR}/_contestant_lifecycle.sh"
 # shellcheck source=_result_info_lifecycle.sh
 source "${SCRIPT_DIR}/_result_info_lifecycle.sh"
+# shellcheck source=_stage_timing.sh
+source "${SCRIPT_DIR}/_stage_timing.sh"
 
 RUN_DIR=""
 LOG_FILE=""
@@ -79,7 +81,14 @@ write_failure_score() {
         r="${PROFILE_REASON[${profile}]:-}"
         [[ -n "${r}" ]] && args+=(--profile-reason "${profile}=${r}")
     done
-    clx_without_lock_fd "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scorer.py" "${args[@]}" >/dev/null 2>&1 || true
+    local score_timeout="${EVALUATOR_SCORE_TIMEOUT_SECONDS:-60}"
+    if command -v timeout >/dev/null 2>&1; then
+        timeout --foreground --kill-after=10s "${score_timeout}s" \
+            bash -c 'exec 9>&- || true; exec "$@"' _ \
+            "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scorer.py" "${args[@]}" >/dev/null 2>&1 || true
+    else
+        clx_without_lock_fd "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scorer.py" "${args[@]}" >/dev/null 2>&1 || true
+    fi
 }
 
 stop_mediamtx() {
@@ -100,6 +109,7 @@ stop_mediamtx() {
 cleanup() {
     local rc=$?
     trap - EXIT INT TERM
+    stg_stop_total_watchdog
     clx_cleanup_contestant
     stop_mediamtx
     if [[ -n "${RUN_DIR:-}" && -d "${RUN_DIR}" && ! -f "${SCORE_FILE}" ]]; then
@@ -120,6 +130,8 @@ cleanup() {
 
 clx_acquire_lock
 clx_prepare_run_dir "${TEAM_ID}"
+stg_load_timeout_budgets
+stg_init_stage_timings
 
 LOG_FILE="${RUN_DIR}/evaluator.log"
 SCORE_FILE="${RUN_DIR}/score.json"
@@ -129,6 +141,7 @@ RESULT_INFO_FILE="${RUN_DIR}/result.info"
 # Tee logs to the run log, but preserve stdout for the final score JSON.
 exec > >(clx_close_lock_fd; tee -a "${LOG_FILE}" >&2) 2>&1
 trap cleanup EXIT INT TERM
+stg_start_total_watchdog
 
 log "starting run team_id=${TEAM_ID} submission=${SUBMISSION_ZIP} run_dir=${RUN_DIR}"
 
@@ -200,11 +213,22 @@ run_capture() {
     profile_fps="$(clx_without_lock_fd "${ROOT_DIR}/.venv/bin/python" -c \
         "from lib.profiles import PROFILES; print(PROFILES['${profile}'].fps)")"
 
-    if clx_without_lock_fd "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/runner.py" \
+    local rc
+    stg_run_stage capture "${profile}" "${EVALUATOR_CAPTURE_TIMEOUT_SECONDS}" \
+        "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/runner.py" \
             --profile "${profile}" --output "${out}" \
             --duration 30 --fps "${profile_fps}" \
-            "${extra_args[@]}"; then
+            "${extra_args[@]}"
+    rc=$?
+    if [[ "${rc}" == "0" ]]; then
         return 0
+    fi
+    if [[ "${rc}" == "124" || "${rc}" == "137" ]]; then
+        local timeout_reason="capture timeout after ${EVALUATOR_CAPTURE_TIMEOUT_SECONDS}s"
+        log "  ${profile} runner timed out: ${timeout_reason}"
+        PROFILE_REASON[${profile}]="${timeout_reason}"
+        CONTESTANT_FEEDBACK+=("${profile}: ${timeout_reason}")
+        return 1
     fi
     local reason
     reason="$(clx_without_lock_fd python3 -c "import json; print(json.load(open('${out}/timestamps.json')).get('reason') or '')" 2>/dev/null || true)"
@@ -223,13 +247,24 @@ analyze_profile() {
     refdir="$(clx_without_lock_fd "${ROOT_DIR}/.venv/bin/python" -c "from lib.profiles import PROFILES; print(PROFILES['${profile}'].reference_dir)")"
     if ! compgen -G "${shots}/shot_*.png" >/dev/null && ! compgen -G "${shots}/shot_*.jpg" >/dev/null; then
         log "no ${profile} screenshots; skipping analyzer"
+        stg_record_stage skipped analysis "${profile}" "${EVALUATOR_ANALYSIS_TIMEOUT_SECONDS}" "" "no screenshots"
         return 1
     fi
-    clx_without_lock_fd "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/analyzer.py" \
+    local rc
+    stg_run_stage analysis "${profile}" "${EVALUATOR_ANALYSIS_TIMEOUT_SECONDS}" \
+        "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/analyzer.py" \
         --profile "${profile}" \
         --screenshots "${shots}" \
         --reference "${ROOT_DIR}/${refdir}" \
         --output "${metrics}"
+    rc=$?
+    if [[ "${rc}" == "124" || "${rc}" == "137" ]]; then
+        local timeout_reason="analysis timeout after ${EVALUATOR_ANALYSIS_TIMEOUT_SECONDS}s"
+        log "  ${profile} analyzer timed out: ${timeout_reason}"
+        PROFILE_REASON[${profile}]="${timeout_reason}"
+        return 1
+    fi
+    return "${rc}"
 }
 
 for profile in "${PROFILES_TO_RUN[@]}"; do
@@ -253,7 +288,18 @@ for feedback in "${CONTESTANT_FEEDBACK[@]:-}"; do
     [[ -n "${feedback}" ]] && SCORER_ARGS+=(--contestant-feedback "${feedback}")
 done
 
-clx_without_lock_fd "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scorer.py" "${SCORER_ARGS[@]}" >/dev/null
+stg_run_stage scoring "" "${EVALUATOR_SCORE_TIMEOUT_SECONDS}" \
+    "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scorer.py" "${SCORER_ARGS[@]}" >/dev/null
+rc=$?
+if [[ "${rc}" != "0" ]]; then
+    if [[ "${rc}" == "124" || "${rc}" == "137" ]]; then
+        FAILURE_REASON="scoring timeout after ${EVALUATOR_SCORE_TIMEOUT_SECONDS}s"
+    else
+        FAILURE_REASON="scoring failed"
+    fi
+    log "${FAILURE_REASON}"
+    exit 1
+fi
 
 log "score written to ${SCORE_FILE}"
 log "report written to ${REPORT_FILE}"

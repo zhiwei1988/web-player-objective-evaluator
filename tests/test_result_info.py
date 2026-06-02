@@ -384,6 +384,23 @@ def test_debug_includes_per_profile_diagnostics_when_present():
     assert "ssim" not in fields["info"]
 
 
+def test_result_info_does_not_dump_internal_layout_diagnostics():
+    score = _full_score()
+    score["2k"]["reason"] = "capture timeout after 120s"
+    score["2k"]["layout_diagnostics"] = {
+        "warnings": ["descendant canvas is larger than clipped host"],
+        "host": {"computedStyle": {"overflow": "hidden"}},
+    }
+
+    text = result_info.render(score=score, runtime_ms=1, run_dir="/r")
+    fields = _parse_fields(text)
+
+    assert "capture timeout after 120s" in fields["debug"]
+    assert "layout_diagnostics" not in fields["debug"]
+    assert "computedStyle" not in fields["debug"]
+    assert "descendant canvas is larger than clipped host" not in fields["info"]
+
+
 def test_debug_includes_cpu_gate_diagnostics_when_gated():
     score = _full_score(cpu_points=0)
     score["cpu"]["gate_reason"] = "2k_fps_below_threshold"

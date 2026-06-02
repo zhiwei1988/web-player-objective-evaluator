@@ -55,3 +55,45 @@ def test_diagnose_run_reports_player_bottleneck(tmp_path):
     report = build_report(run, include_host=False)
 
     assert "Likely bottleneck: contestant playback / decode / rendering" in report
+
+
+def test_diagnose_run_reports_stage_timings_and_layout_warnings(tmp_path):
+    run = tmp_path / "results" / "self_20260521_120000"
+    shots = run / "2k_screenshots"
+    shots.mkdir(parents=True)
+    (run / "stage_timings.json").write_text(json.dumps({
+        "stages": [
+            {
+                "stage": "capture",
+                "profile": "2k",
+                "status": "timeout",
+                "duration_s": 1.0,
+                "timeout_seconds": 1,
+                "reason": "capture timeout after 1s",
+            }
+        ],
+    }))
+    (shots / "timestamps.json").write_text(json.dumps({
+        "layout_diagnostics": {
+            "warnings": ["descendant canvas is larger than clipped host"]
+        }
+    }))
+
+    report = build_report(run, include_host=False)
+
+    assert "Stage timings:" in report
+    assert "capture[2k]: timeout" in report
+    assert "capture timeout after 1s" in report
+    assert "Layout warnings:" in report
+    assert "2k: descendant canvas is larger than clipped host" in report
+
+
+def test_diagnose_run_without_new_diagnostics_is_backward_compatible(tmp_path):
+    run = tmp_path / "results" / "self_20260521_120000"
+    run.mkdir(parents=True)
+
+    report = build_report(run, include_host=False)
+
+    assert "No *_metrics.json files found." in report
+    assert "Stage timings:" not in report
+    assert "Layout warnings:" not in report

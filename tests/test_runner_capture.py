@@ -102,6 +102,111 @@ def test_timestamps_include_capture_metadata(tmp_path):
     assert out["clip"] == {"x": 0, "y": 0, "width": 1280, "height": 720}
 
 
+def test_timestamps_include_layout_diagnostics(tmp_path):
+    result = runner.CaptureResult(
+        success=True,
+        target_fps=20.0,
+        target_duration_s=30.0,
+        capture_strategy="playwright",
+        jpeg_quality=90,
+        clip={"x": 0, "y": 0, "width": 1280, "height": 720},
+    )
+    result.layout_diagnostics = {
+        "url": "http://localhost:8080/play?profile=2k&autoplay=1",
+        "viewport": {"width": 1280, "height": 720},
+        "devicePixelRatio": 1,
+        "ready": True,
+        "error": None,
+        "clip": result.clip,
+        "host": {"bbox": {"x": 0, "y": 0, "width": 1280, "height": 720}},
+        "media": [],
+        "warnings": ["no descendant canvas/video elements found"],
+    }
+
+    runner._write_timestamps(tmp_path, result)
+
+    out = json.loads((tmp_path / "timestamps.json").read_text())
+    assert out["layout_diagnostics"]["viewport"] == {"width": 1280, "height": 720}
+    assert out["layout_diagnostics"]["warnings"] == ["no descendant canvas/video elements found"]
+
+
+def test_layout_warning_for_oversized_canvas_in_clipped_host():
+    diagnostics = {
+        "ready": True,
+        "host": {
+            "bbox": {"width": 1280, "height": 720},
+            "client": {"width": 1280, "height": 720},
+            "scroll": {"width": 2560, "height": 1440},
+            "computedStyle": {"overflow": "hidden", "overflowX": "hidden", "overflowY": "hidden"},
+        },
+        "media": [
+            {
+                "tag": "canvas",
+                "bbox": {"width": 2560, "height": 1440},
+                "client": {"width": 2560, "height": 1440},
+                "intrinsic": {"width": 2560, "height": 1440},
+                "computedStyle": {"transform": "none"},
+            }
+        ],
+        "clip": {"width": 1280, "height": 720},
+    }
+
+    warnings = runner._derive_layout_warnings(diagnostics)
+
+    assert any("larger than clipped host" in warning for warning in warnings)
+
+
+def test_layout_warnings_for_transform_missing_media_and_zero_intrinsic_size():
+    diagnostics = {
+        "ready": True,
+        "host": {
+            "bbox": {"width": 1280, "height": 720},
+            "computedStyle": {"overflow": "visible", "transform": "scale(2)"},
+        },
+        "media": [
+            {
+                "tag": "video",
+                "bbox": {"width": 1280, "height": 720},
+                "intrinsic": {"width": 0, "height": 0},
+                "computedStyle": {"transform": "none"},
+            }
+        ],
+        "clip": {"width": 1280, "height": 720},
+    }
+
+    warnings = runner._derive_layout_warnings(diagnostics)
+    missing_warnings = runner._derive_layout_warnings({
+        "ready": True,
+        "host": {"bbox": {"width": 1280, "height": 720}, "computedStyle": {}},
+        "media": [],
+        "clip": {"width": 1280, "height": 720},
+    })
+
+    assert any("transform" in warning for warning in warnings)
+    assert any("zero intrinsic" in warning for warning in warnings)
+    assert any("no descendant canvas/video" in warning for warning in missing_warnings)
+
+
+def test_collect_layout_diagnostics_is_bounded_for_many_media_elements():
+    raw = {
+        "url": "http://localhost:8080/play",
+        "viewport": {"width": 1280, "height": 720},
+        "devicePixelRatio": 1,
+        "ready": True,
+        "error": None,
+        "host": {"bbox": {"width": 1280, "height": 720}, "computedStyle": {}},
+        "media": [
+            {"tag": "canvas", "bbox": {"width": 1, "height": 1}, "intrinsic": {"width": 1, "height": 1}}
+            for _ in range(runner.MAX_LAYOUT_MEDIA_ELEMENTS + 3)
+        ],
+    }
+
+    diagnostics = runner._normalize_layout_diagnostics(raw, {"x": 0, "y": 0, "width": 1280, "height": 720})
+
+    assert len(diagnostics["media"]) == runner.MAX_LAYOUT_MEDIA_ELEMENTS
+    assert any("truncated media diagnostics" in warning for warning in diagnostics["warnings"])
+
+
 def test_timestamps_include_contestant_feedback_for_capture_reason(tmp_path):
     result = runner.CaptureResult(
         success=False,

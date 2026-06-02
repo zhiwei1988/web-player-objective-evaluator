@@ -165,6 +165,75 @@ def _capture_diagnostics_table(metrics: dict | None) -> str:
 '''
 
 
+def _read_json(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None
+
+
+def _stage_diagnostics_section(run_dir: Path) -> str:
+    data = _read_json(run_dir / "stage_timings.json")
+    if not data:
+        return ""
+    rows = []
+    for record in data.get("stages") or []:
+        if not isinstance(record, dict):
+            continue
+        stage = str(record.get("stage") or "")
+        profile = str(record.get("profile") or "")
+        label = f"{stage}[{profile}]" if profile else stage
+        status = str(record.get("status") or "")
+        cls = "fail" if status in {"failed", "timeout"} else ("warn" if status == "skipped" else "ok")
+        timeout = record.get("timeout_seconds")
+        timeout_str = f"{timeout}s" if timeout not in (None, "") else ""
+        duration = record.get("duration_s")
+        duration_str = _fmt_metric(duration, "s")
+        reason = str(record.get("reason") or "")
+        rows.append(
+            "<tr>"
+            f"<th>{html.escape(label)}</th>"
+            f'<td><span class="{cls}">{html.escape(status)}</span></td>'
+            f"<td>{html.escape(timeout_str)}</td>"
+            f"<td>{html.escape(duration_str)}</td>"
+            f"<td>{html.escape(reason)}</td>"
+            "</tr>"
+        )
+    if not rows:
+        return ""
+    return f'''
+<section>
+  <h2>Stage diagnostics</h2>
+  <table>
+    <tr><th>stage</th><th>status</th><th>timeout</th><th>duration</th><th>reason</th></tr>
+    {''.join(rows)}
+  </table>
+  <p><a href="stage_timings.json">stage_timings.json</a></p>
+</section>
+'''
+
+
+def _layout_diagnostics_section(profile: str, run_dir: Path) -> str:
+    timestamps = _read_json(run_dir / f"{profile}_screenshots" / "timestamps.json")
+    layout = (timestamps or {}).get("layout_diagnostics")
+    if not isinstance(layout, dict):
+        return ""
+    warnings = [str(w) for w in (layout.get("warnings") or []) if str(w)]
+    if not warnings:
+        return f'''
+  <h3>Layout diagnostics</h3>
+  <p>no layout warnings — <a href="{profile}_screenshots/timestamps.json">timestamps.json</a></p>
+'''
+    items = "".join(f"<li>{html.escape(w)}</li>" for w in warnings[:12])
+    if len(warnings) > 12:
+        items += "<li>additional warnings omitted here; see timestamps.json</li>"
+    return f'''
+  <h3>Layout diagnostics</h3>
+  <ul>{items}</ul>
+  <p><a href="{profile}_screenshots/timestamps.json">timestamps.json</a></p>
+'''
+
+
 def render_report(
     *,
     score: dict,
@@ -188,6 +257,7 @@ def render_report(
   <table>
     <tr><th>reason</th><td>{html.escape(profile_score.get("reason") or "")}</td></tr>
   </table>
+  {_layout_diagnostics_section(profile, run_dir)}
 </section>
 '''
         ssim_scores = (metrics or {}).get("ssim_scores", [])
@@ -246,6 +316,7 @@ def render_report(
     <tr><th>mean SSIM</th><td>{profile_score["mean_ssim"]:.3f}</td></tr>
     <tr><th>reason</th><td>{html.escape(profile_score.get("reason") or "")}</td></tr>
   </table>
+  {_layout_diagnostics_section(profile, run_dir)}
   {_capture_diagnostics_table(metrics or {})}
   {_frame_number_svg(frame_numbers, f"{label}: frame number over time")}
   {_histogram_svg(ssim_scores, f"{label}: SSIM histogram")}
@@ -428,6 +499,7 @@ code {{ background: #f5f5f7; padding: 1px 4px; border-radius: 3px; }}
 </section>
 
 {profile_sections}
+{_stage_diagnostics_section(run_dir)}
 {cpu_section()}
 </body></html>
 '''

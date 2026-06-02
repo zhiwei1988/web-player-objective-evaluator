@@ -76,3 +76,48 @@ def test_report_renders_capture_diagnostics_and_local_links(tmp_path):
     assert 'src="https://' not in html
     assert 'href="http://' not in html
     assert 'href="https://' not in html
+
+
+def test_report_renders_stage_timeout_and_layout_warnings(tmp_path):
+    score = {
+        "objective_total": 0,
+        "max_score": 30,
+        "chromium_version": "test",
+        "2k": {"reason": "capture timeout after 120s"},
+        "4k": _profile_score(14.0),
+        "cpu": {"points": 0, "gated": True, "gate_reason": "2k_round_failed"},
+    }
+    (tmp_path / "stage_timings.json").write_text(json.dumps({
+        "budgets": {"capture_timeout_seconds": 120},
+        "stages": [
+            {
+                "stage": "capture",
+                "profile": "2k",
+                "status": "timeout",
+                "timeout_seconds": 120,
+                "reason": "capture timeout after 120s",
+            }
+        ],
+    }))
+    shots = tmp_path / "4k_screenshots"
+    shots.mkdir()
+    (shots / "timestamps.json").write_text(json.dumps({
+        "layout_diagnostics": {
+            "warnings": ["descendant canvas is larger than clipped host"]
+        }
+    }))
+    out = tmp_path / "report.html"
+
+    report.render_report(
+        score=score,
+        profile_metrics={"2k": None, "4k": _metrics()},
+        output=out,
+        run_dir=tmp_path,
+    )
+
+    html = out.read_text()
+    assert "Stage diagnostics" in html
+    assert "capture timeout after 120s" in html
+    assert "Layout diagnostics" in html
+    assert "descendant canvas is larger than clipped host" in html
+    assert "4k_screenshots/timestamps.json" in html

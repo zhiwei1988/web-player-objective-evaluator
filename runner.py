@@ -43,6 +43,7 @@ DEFAULT_JPEG_QUALITY = 90
 CAPTURE_STRATEGY_PLAYWRIGHT = "playwright"
 CAPTURE_STRATEGY_CDP = "cdp"
 CAPTURE_STRATEGIES = (CAPTURE_STRATEGY_PLAYWRIGHT, CAPTURE_STRATEGY_CDP)
+MAX_LAYOUT_MEDIA_ELEMENTS = 8
 
 
 class PlayerClipTooSmall(ValueError):
@@ -66,6 +67,7 @@ class CaptureResult:
     clip: dict | None = None
     decode_forensics: dict | None = None
     contestant_feedback: list[str] = field(default_factory=list)
+    layout_diagnostics: dict | None = None
 
 
 def run_capture(
@@ -220,6 +222,7 @@ def run_capture(
                 result.browser_errors.append(f"diagnostic: {json.dumps(diag)}")
             except PlaywrightError as exc:
                 result.browser_errors.append(f"diagnostic_failed: {exc}")
+            result.layout_diagnostics = _collect_layout_diagnostics(page, None)
             # Capture a screenshot of the *page* (not just the host element) for
             # eyeball debugging — element clip may not exist if host never laid
             # out.
@@ -264,6 +267,7 @@ def run_capture(
             browser.close()
             return result
         result.clip = clip
+        result.layout_diagnostics = _collect_layout_diagnostics(page, clip)
 
         # Capture loop. JPEG quality=90 is visually indistinguishable from PNG
         # for our watermarked test pattern but encodes ~3x faster, which is
@@ -372,6 +376,220 @@ def validate_player_clip(clip: dict) -> None:
             "player-video below minimum size "
             f"({width}x{height} < {MIN_PLAYER_WIDTH}x{MIN_PLAYER_HEIGHT})"
         )
+
+
+def _box_dict(value: dict | None) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    out: dict[str, float] = {}
+    for key in ("x", "y", "width", "height", "top", "right", "bottom", "left"):
+        raw = value.get(key)
+        if isinstance(raw, (int, float)):
+            out[key] = float(raw)
+    return out
+
+
+def _dim_dict(value: dict | None) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, float] = {}
+    for key in ("width", "height"):
+        raw = value.get(key)
+        if isinstance(raw, (int, float)):
+            out[key] = float(raw)
+    return out
+
+
+def _style_subset(value: dict | None) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    keys = (
+        "display",
+        "visibility",
+        "position",
+        "overflow",
+        "overflowX",
+        "overflowY",
+        "objectFit",
+        "transform",
+        "width",
+        "height",
+    )
+    return {key: str(value.get(key) or "") for key in keys if key in value}
+
+
+def _normalize_layout_diagnostics(raw: dict | None, clip: dict | None) -> dict:
+    raw = raw if isinstance(raw, dict) else {}
+    media_in = raw.get("media") if isinstance(raw.get("media"), list) else []
+    media = []
+    for item in media_in[:MAX_LAYOUT_MEDIA_ELEMENTS]:
+        if not isinstance(item, dict):
+            continue
+        media.append({
+            "tag": str(item.get("tag") or "").lower(),
+            "id": str(item.get("id") or ""),
+            "testid": str(item.get("testid") or ""),
+            "bbox": _box_dict(item.get("bbox")),
+            "client": _dim_dict(item.get("client")),
+            "intrinsic": _dim_dict(item.get("intrinsic")),
+            "computedStyle": _style_subset(item.get("computedStyle")),
+        })
+
+    host_in = raw.get("host") if isinstance(raw.get("host"), dict) else {}
+    diagnostics = {
+        "url": str(raw.get("url") or ""),
+        "viewport": _dim_dict(raw.get("viewport")),
+        "devicePixelRatio": raw.get("devicePixelRatio"),
+        "scroll": raw.get("scroll") if isinstance(raw.get("scroll"), dict) else {},
+        "documentReadyState": str(raw.get("documentReadyState") or ""),
+        "ready": raw.get("ready"),
+        "error": raw.get("error"),
+        "clip": clip,
+        "host": {
+            "bbox": _box_dict(host_in.get("bbox")),
+            "client": _dim_dict(host_in.get("client")),
+            "scroll": _dim_dict(host_in.get("scroll")),
+            "offset": _dim_dict(host_in.get("offset")),
+            "computedStyle": _style_subset(host_in.get("computedStyle")),
+        },
+        "media": media,
+        "warnings": [],
+    }
+    warnings = _derive_layout_warnings(diagnostics)
+    if len(media_in) > MAX_LAYOUT_MEDIA_ELEMENTS:
+        warnings.append(
+            f"truncated media diagnostics to {MAX_LAYOUT_MEDIA_ELEMENTS} of {len(media_in)} elements"
+        )
+    diagnostics["warnings"] = warnings
+    return diagnostics
+
+
+def _overflow_clips(style: dict) -> bool:
+    vals = [style.get("overflow"), style.get("overflowX"), style.get("overflowY")]
+    return any(v in {"hidden", "clip", "scroll", "auto"} for v in vals if v)
+
+
+def _transform_applied(style: dict) -> bool:
+    value = str(style.get("transform") or "")
+    return bool(value and value != "none")
+
+
+def _derive_layout_warnings(diagnostics: dict) -> list[str]:
+    warnings: list[str] = []
+    clip = diagnostics.get("clip") or {}
+    host = diagnostics.get("host") or {}
+    host_box = host.get("bbox") or {}
+    host_style = host.get("computedStyle") or {}
+    media = diagnostics.get("media") or []
+
+    clip_w = float(clip.get("width") or 0)
+    clip_h = float(clip.get("height") or 0)
+    if clip and (clip_w < MIN_PLAYER_WIDTH or clip_h < MIN_PLAYER_HEIGHT):
+        warnings.append(
+            f"host clip below contract size ({clip_w:g}x{clip_h:g} < {MIN_PLAYER_WIDTH}x{MIN_PLAYER_HEIGHT})"
+        )
+    if _transform_applied(host_style):
+        warnings.append("player host has CSS transform applied")
+    if not media:
+        warnings.append("no descendant canvas/video elements found")
+
+    host_w = float(host_box.get("width") or 0)
+    host_h = float(host_box.get("height") or 0)
+    host_clips = _overflow_clips(host_style)
+    for item in media:
+        tag = item.get("tag") or "media"
+        style = item.get("computedStyle") or {}
+        if _transform_applied(style):
+            warnings.append(f"{tag} element has CSS transform applied")
+        intrinsic = item.get("intrinsic") or {}
+        if diagnostics.get("ready") is True and (
+            float(intrinsic.get("width") or 0) <= 0
+            or float(intrinsic.get("height") or 0) <= 0
+        ):
+            warnings.append(f"{tag} element has zero intrinsic dimensions after readiness")
+        box = item.get("bbox") or {}
+        media_w = float(box.get("width") or (item.get("client") or {}).get("width") or 0)
+        media_h = float(box.get("height") or (item.get("client") or {}).get("height") or 0)
+        if host_clips and host_w > 0 and host_h > 0 and (
+            media_w > host_w + 1 or media_h > host_h + 1
+        ):
+            warnings.append(f"{tag} element is larger than clipped host; screenshot may show only part of it")
+    return warnings
+
+
+def _collect_layout_diagnostics(page, clip: dict | None) -> dict | None:
+    try:
+        raw = page.evaluate(
+            f"""() => {{
+                const maxMedia = {MAX_LAYOUT_MEDIA_ELEMENTS + 1};
+                const box = (el) => {{
+                    if (!el) return null;
+                    const r = el.getBoundingClientRect();
+                    return {{
+                        x: r.x, y: r.y, width: r.width, height: r.height,
+                        top: r.top, right: r.right, bottom: r.bottom, left: r.left,
+                    }};
+                }};
+                const style = (el) => {{
+                    if (!el) return {{}};
+                    const s = getComputedStyle(el);
+                    return {{
+                        display: s.display,
+                        visibility: s.visibility,
+                        position: s.position,
+                        overflow: s.overflow,
+                        overflowX: s.overflowX,
+                        overflowY: s.overflowY,
+                        objectFit: s.objectFit,
+                        transform: s.transform,
+                        width: s.width,
+                        height: s.height,
+                    }};
+                }};
+                const dims = (el, kind) => {{
+                    if (!el) return {{}};
+                    if (kind === 'client') return {{width: el.clientWidth || 0, height: el.clientHeight || 0}};
+                    if (kind === 'scroll') return {{width: el.scrollWidth || 0, height: el.scrollHeight || 0}};
+                    if (kind === 'offset') return {{width: el.offsetWidth || 0, height: el.offsetHeight || 0}};
+                    return {{}};
+                }};
+                const el = document.querySelector('[data-testid="player-video"]');
+                const media = Array.from((el || document).querySelectorAll('canvas,video')).slice(0, maxMedia).map((m) => {{
+                    const tag = m.tagName.toLowerCase();
+                    return {{
+                        tag,
+                        id: m.id || '',
+                        testid: m.getAttribute('data-testid') || '',
+                        bbox: box(m),
+                        client: dims(m, 'client'),
+                        intrinsic: tag === 'canvas'
+                            ? {{width: m.width || 0, height: m.height || 0}}
+                            : {{width: m.videoWidth || 0, height: m.videoHeight || 0}},
+                        computedStyle: style(m),
+                    }};
+                }});
+                return {{
+                    url: location.href,
+                    viewport: {{width: window.innerWidth, height: window.innerHeight}},
+                    devicePixelRatio: window.devicePixelRatio,
+                    scroll: {{x: window.scrollX, y: window.scrollY}},
+                    documentReadyState: document.readyState,
+                    ready: window.__PLAYER_READY__ ?? null,
+                    error: window.__PLAYER_ERROR__ ?? null,
+                    host: el && {{
+                        bbox: box(el),
+                        client: dims(el, 'client'),
+                        scroll: dims(el, 'scroll'),
+                        offset: dims(el, 'offset'),
+                        computedStyle: style(el),
+                    }},
+                    media,
+                }};
+            }}"""
+        )
+    except PlaywrightError:
+        return None
+    return _normalize_layout_diagnostics(raw, clip)
 
 
 def _capture_screenshot(
@@ -598,24 +816,22 @@ def _write_capture_meta(output: Path, profile: str, result: CaptureResult) -> No
 
 def _write_timestamps(output: Path, result: CaptureResult) -> None:
     contestant_feedback = _contestant_feedback_from_result(result)
-    (output / "timestamps.json").write_text(
-        json.dumps(
-            {
-                "success": result.success,
-                "reason": result.reason,
-                "timestamps": result.timestamps,
-                "target_fps": result.target_fps,
-                "target_duration_s": result.target_duration_s,
-                "capture_strategy": result.capture_strategy,
-                "jpeg_quality": result.jpeg_quality,
-                "clip": result.clip,
-                "contestant_feedback": contestant_feedback,
-                "browser_errors": result.browser_errors,
-                "chromium_version": result.chromium_version,
-            },
-            indent=2,
-        )
-    )
+    payload = {
+        "success": result.success,
+        "reason": result.reason,
+        "timestamps": result.timestamps,
+        "target_fps": result.target_fps,
+        "target_duration_s": result.target_duration_s,
+        "capture_strategy": result.capture_strategy,
+        "jpeg_quality": result.jpeg_quality,
+        "clip": result.clip,
+        "contestant_feedback": contestant_feedback,
+        "browser_errors": result.browser_errors,
+        "chromium_version": result.chromium_version,
+    }
+    if result.layout_diagnostics is not None:
+        payload["layout_diagnostics"] = result.layout_diagnostics
+    (output / "timestamps.json").write_text(json.dumps(payload, indent=2))
 
 
 def _contestant_feedback_from_result(result: CaptureResult) -> list[str]:
