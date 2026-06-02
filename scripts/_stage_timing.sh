@@ -44,11 +44,88 @@ path.write_text(json.dumps(data, indent=2))
 PY
 }
 
+stg_ensure_stage_timings() {
+    [[ -n "${STAGE_TIMINGS_FILE:-}" ]] || STAGE_TIMINGS_FILE="${RUN_DIR:-}/stage_timings.json"
+    [[ -n "${STAGE_TIMINGS_FILE}" ]] || return 0
+    [[ -f "${STAGE_TIMINGS_FILE}" ]] && return 0
+    mkdir -p "$(dirname "${STAGE_TIMINGS_FILE}")"
+    python3 - "${STAGE_TIMINGS_FILE}" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+def as_int(name: str, default: int) -> int:
+    try:
+        return int(float(os.environ.get(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+path = Path(sys.argv[1])
+data = {
+    "budgets": {
+        "capture_timeout_seconds": as_int("EVALUATOR_CAPTURE_TIMEOUT_SECONDS", 120),
+        "analysis_timeout_seconds": as_int("EVALUATOR_ANALYSIS_TIMEOUT_SECONDS", 240),
+        "score_timeout_seconds": as_int("EVALUATOR_SCORE_TIMEOUT_SECONDS", 60),
+        "total_timeout_seconds": as_int("EVALUATOR_TOTAL_TIMEOUT_SECONDS", 600),
+        "contestant_memory_max": os.environ.get("EVALUATOR_CONTESTANT_MEMORY_MAX_EFFECTIVE")
+            or os.environ.get("EVALUATOR_CONTESTANT_MEMORY_MAX")
+            or "10G",
+    },
+    "stages": [],
+}
+path.write_text(json.dumps(data, indent=2))
+PY
+}
+
+stg_record_stage_started() {
+    local stage="$1" profile="${2:-}" timeout_seconds="${3:-}" start_epoch="${4:-}" reason="${5:-}"
+    [[ -n "${STAGE_TIMINGS_FILE:-}" ]] || STAGE_TIMINGS_FILE="${RUN_DIR:-}/stage_timings.json"
+    [[ -n "${STAGE_TIMINGS_FILE}" ]] || return 0
+    stg_ensure_stage_timings
+    local now
+    now="$(python3 - <<'PY'
+import time
+print(f"{time.time():.6f}")
+PY
+)"
+    [[ -n "${start_epoch}" ]] || start_epoch="${now}"
+    [[ -n "${reason}" ]] || reason="stage started; if no later final record exists, evaluator stopped before classifying this stage"
+    python3 - "${STAGE_TIMINGS_FILE}" "${stage}" "${profile}" "${timeout_seconds}" "${reason}" "${start_epoch}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    data = json.loads(path.read_text())
+except Exception:
+    data = {"budgets": {}, "stages": []}
+
+stage, profile = sys.argv[2], sys.argv[3]
+timeout_s, reason = sys.argv[4], sys.argv[5]
+start_epoch = float(sys.argv[6])
+record = {
+    "stage": stage,
+    "status": "running",
+    "start_epoch": start_epoch,
+    "reason": reason,
+}
+if profile:
+    record["profile"] = profile
+if timeout_s:
+    record["timeout_seconds"] = int(float(timeout_s))
+data.setdefault("stages", []).append(record)
+path.write_text(json.dumps(data, indent=2))
+PY
+}
+
 stg_record_stage() {
     local status="$1" stage="$2" profile="${3:-}" timeout_seconds="${4:-}" exit_code="${5:-}" reason="${6:-}"
     local start_epoch="${7:-}" end_epoch="${8:-}" duration_s="${9:-}"
     [[ -n "${STAGE_TIMINGS_FILE:-}" ]] || STAGE_TIMINGS_FILE="${RUN_DIR:-}/stage_timings.json"
     [[ -n "${STAGE_TIMINGS_FILE}" ]] || return 0
+    stg_ensure_stage_timings
     local now
     now="$(python3 - <<'PY'
 import time
@@ -109,6 +186,7 @@ import time
 print(f"{time.time():.6f}")
 PY
 )"
+    stg_record_stage_started "${stage}" "${profile}" "${timeout_seconds}" "${start_epoch}"
     if [[ -n "${timeout_seconds}" && "${timeout_seconds}" != "0" ]]; then
         timeout --foreground --kill-after=10s "${timeout_seconds}s" \
             bash -c 'exec 9>&- || true; exec "$@"' _ "$@"

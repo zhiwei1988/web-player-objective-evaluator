@@ -107,6 +107,27 @@ def test_diagnose_run_reports_contestant_memory_limit_metadata(tmp_path):
     assert "Contestant memory limit: 10G" in report
 
 
+def test_diagnose_run_reports_unfinished_running_stage(tmp_path):
+    run = tmp_path / "results" / "self_20260521_120000"
+    run.mkdir(parents=True)
+    (run / "stage_timings.json").write_text(json.dumps({
+        "stages": [
+            {
+                "stage": "capture",
+                "profile": "2k",
+                "status": "running",
+                "timeout_seconds": 120,
+                "reason": "stage started; no final record",
+            }
+        ],
+    }))
+
+    report = build_report(run, include_host=False)
+
+    assert "capture[2k]: running" in report
+    assert "stage started; no final record" in report
+
+
 def test_diagnose_run_without_new_diagnostics_is_backward_compatible(tmp_path):
     run = tmp_path / "results" / "self_20260521_120000"
     run.mkdir(parents=True)

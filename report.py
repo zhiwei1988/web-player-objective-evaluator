@@ -186,7 +186,7 @@ def _stage_diagnostics_section(run_dir: Path) -> str:
         profile = str(record.get("profile") or "")
         label = f"{stage}[{profile}]" if profile else stage
         status = str(record.get("status") or "")
-        cls = "fail" if status in {"failed", "timeout"} else ("warn" if status == "skipped" else "ok")
+        cls = "fail" if status in {"failed", "timeout"} else ("warn" if status in {"skipped", "running"} else "ok")
         timeout = record.get("timeout_seconds")
         timeout_str = f"{timeout}s" if timeout not in (None, "") else ""
         duration = record.get("duration_s")

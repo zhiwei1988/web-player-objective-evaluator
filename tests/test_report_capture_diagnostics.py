@@ -151,3 +151,39 @@ def test_report_renders_contestant_memory_limit_metadata(tmp_path):
     assert "contestant memory limit" in html
     assert "10G" in html
     assert "contestant_memory_limit_exceeded" in html
+
+
+def test_report_renders_unfinished_running_stage(tmp_path):
+    score = {
+        "objective_total": 0,
+        "max_score": 30,
+        "chromium_version": "test",
+        "2k": {"reason": "capture interrupted"},
+        "4k": None,
+        "cpu": {"points": 0, "gated": True, "gate_reason": "2k_round_failed"},
+    }
+    (tmp_path / "stage_timings.json").write_text(json.dumps({
+        "budgets": {"capture_timeout_seconds": 120},
+        "stages": [
+            {
+                "stage": "capture",
+                "profile": "2k",
+                "status": "running",
+                "timeout_seconds": 120,
+                "reason": "stage started; no final record",
+            }
+        ],
+    }))
+    out = tmp_path / "report.html"
+
+    report.render_report(
+        score=score,
+        profile_metrics={"2k": None, "4k": None},
+        output=out,
+        run_dir=tmp_path,
+    )
+
+    html = out.read_text()
+    assert "capture[2k]" in html
+    assert '<span class="warn">running</span>' in html
+    assert "stage started; no final record" in html

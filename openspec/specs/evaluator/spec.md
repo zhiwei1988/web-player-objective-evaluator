@@ -825,12 +825,12 @@ The evaluator SHALL enforce bounded wall-clock execution budgets for long-runnin
 
 When a per-profile capture or analysis stage times out, the evaluator SHALL record a profile-specific reason, preserve any partial artifacts already written, continue to later stages or profiles when possible, and still produce a schema-compatible `score.json`, `report.html`, and `result.info` when the scoring path can run. A stage timeout SHALL NOT fabricate successful metrics. Existing scoring formulas SHALL remain unchanged; missing metrics and profile reasons SHALL be handled through the existing failure/profile-reason scoring path.
 
-The evaluator SHALL write a run-level machine-readable stage timing artifact under `results/<team_id>_<ts>/` containing one bounded record per major stage. Each record SHALL include at least stage name, profile when applicable, start epoch, end epoch when known, duration seconds when known, status (`success`, `failed`, `timeout`, or `skipped`), effective timeout seconds when applicable, exit code when available, and reason when available.
+The evaluator SHALL write a run-level machine-readable stage timing artifact under `results/<team_id>_<ts>/` containing bounded records for major stages. Each record SHALL include at least stage name, profile when applicable, start epoch, end epoch when known, duration seconds when known, status (`running`, `success`, `failed`, `timeout`, or `skipped`), effective timeout seconds when applicable, exit code when available, and reason when available. For bounded stages, the evaluator SHALL write a `running` record before launching the stage process and SHALL write a final `success`, `failed`, or `timeout` record after the stage exits. A `running` record without a later final record for the same stage/profile indicates that the evaluator stopped before it could classify that stage.
 
 #### Scenario: Normal run records successful stages
 
 - **WHEN** a submission completes both profile captures, both analyses, and scoring inside the default budgets
-- **THEN** the run directory contains a stage timing artifact with successful records for 2K capture, 2K analysis, 4K capture, 4K analysis, scoring/report generation, and cleanup-relevant stages
+- **THEN** the run directory contains a stage timing artifact with start and successful final records for 2K capture, 2K analysis, 4K capture, 4K analysis, scoring/report generation, and cleanup-relevant stages
 - **THEN** `score.json` and `report.html` are produced using the existing scoring formulas
 
 #### Scenario: Capture timeout is bounded and classified

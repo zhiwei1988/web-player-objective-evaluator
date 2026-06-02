@@ -75,12 +75,20 @@ def test_stage_timing_records_success_failure_timeout_and_skipped(tmp_path: Path
     data = json.loads((run_dir / "stage_timings.json").read_text())
     assert data["budgets"]["capture_timeout_seconds"] == 120
     records = data["stages"]
-    assert [r["status"] for r in records] == ["success", "failed", "timeout", "skipped"]
+    assert [r["status"] for r in records] == [
+        "running",
+        "success",
+        "running",
+        "failed",
+        "running",
+        "timeout",
+        "skipped",
+    ]
     assert records[0]["stage"] == "capture"
     assert records[0]["profile"] == "2k"
-    assert records[1]["exit_code"] == 3
-    assert records[2]["reason"] == "capture timeout after 1s"
-    assert records[3]["reason"] == "no screenshots"
+    assert records[3]["exit_code"] == 3
+    assert records[5]["reason"] == "capture timeout after 1s"
+    assert records[6]["reason"] == "no screenshots"
 
 
 def test_timeout_stage_does_not_prevent_later_stage_recording(tmp_path: Path) -> None:
@@ -102,5 +110,68 @@ def test_timeout_stage_does_not_prevent_later_stage_recording(tmp_path: Path) ->
 
     assert proc.returncode == 0, proc.stderr
     records = json.loads((run_dir / "stage_timings.json").read_text())["stages"]
-    assert [r["profile"] for r in records] == ["2k", "4k"]
-    assert [r["status"] for r in records] == ["timeout", "success"]
+    assert [r["profile"] for r in records] == ["2k", "2k", "4k", "4k"]
+    assert [r["status"] for r in records] == ["running", "timeout", "running", "success"]
+
+
+def test_stage_timing_records_running_marker_before_command_finishes(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    harness = textwrap.dedent(
+        f"""\
+        set -uo pipefail
+        source {str(HELPER)!r}
+        RUN_DIR={str(run_dir)!r}
+        mkdir -p "${{RUN_DIR}}"
+        stg_load_timeout_budgets
+        stg_init_stage_timings
+        stg_run_stage capture 2k 5 bash -c 'sleep 1' &
+        stage_pid=$!
+        sleep 0.2
+        python3 - "${{RUN_DIR}}/stage_timings.json" <<'PY'
+import json
+import sys
+data = json.load(open(sys.argv[1]))
+print("mid_statuses=" + ",".join(r["status"] for r in data["stages"]))
+print("mid_stage=" + data["stages"][0]["stage"])
+print("mid_profile=" + data["stages"][0]["profile"])
+PY
+        wait "${{stage_pid}}"
+        python3 - "${{RUN_DIR}}/stage_timings.json" <<'PY'
+import json
+import sys
+data = json.load(open(sys.argv[1]))
+print("final_statuses=" + ",".join(r["status"] for r in data["stages"]))
+PY
+        """
+    )
+
+    proc = _run_harness(harness, tmp_path)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "mid_statuses=running" in proc.stdout
+    assert "mid_stage=capture" in proc.stdout
+    assert "mid_profile=2k" in proc.stdout
+    assert "final_statuses=running,success" in proc.stdout
+
+
+def test_stage_record_recreates_missing_stage_timings_file(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    harness = textwrap.dedent(
+        f"""\
+        set -uo pipefail
+        source {str(HELPER)!r}
+        RUN_DIR={str(run_dir)!r}
+        mkdir -p "${{RUN_DIR}}"
+        stg_load_timeout_budgets
+        stg_init_stage_timings
+        rm "${{RUN_DIR}}/stage_timings.json"
+        stg_run_stage capture 2k 1 bash -c 'exit 0'
+        """
+    )
+
+    proc = _run_harness(harness, tmp_path)
+
+    assert proc.returncode == 0, proc.stderr
+    data = json.loads((run_dir / "stage_timings.json").read_text())
+    assert data["budgets"]["capture_timeout_seconds"] == 120
+    assert [r["status"] for r in data["stages"]] == ["running", "success"]
