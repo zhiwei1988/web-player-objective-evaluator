@@ -105,6 +105,21 @@ def _build_info_lines(score: dict) -> list[str]:
         lines.extend(["", "Runtime Metrics:"])
         lines.extend(info_metrics)
 
+    snapshot_lines: list[str] = []
+    snapshots = score.get("rendered_snapshots")
+    if isinstance(snapshots, list):
+        for item in snapshots:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("url") or "").strip()
+            if not url:
+                continue
+            label = str(item.get("label") or item.get("profile") or "Snapshot").strip()
+            snapshot_lines.append(f"- {label}: {url}")
+    if snapshot_lines:
+        lines.extend(["", "Rendered Snapshots:"])
+        lines.extend(snapshot_lines)
+
     feedback = score.get("contestant_feedback")
     if isinstance(feedback, str):
         feedback_lines = [feedback.strip()] if feedback.strip() else []

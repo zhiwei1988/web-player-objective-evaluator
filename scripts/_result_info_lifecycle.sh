@@ -80,6 +80,20 @@ write_result_info() {
         run_without_lock=(clx_without_lock_fd)
     fi
 
+    local snapshot_args=(
+        --score-json "${SCORE_FILE}"
+        --run-dir "${RUN_DIR}"
+        --submission-zip "${SUBMISSION_ZIP}"
+        --public-base-url "${EVALUATOR_PUBLIC_ARTIFACT_BASE_URL:-}"
+    )
+    if [[ -n "${EVALUATOR_PUBLIC_ARTIFACT_ROOT:-}" ]]; then
+        snapshot_args+=(--public-artifact-root "${EVALUATOR_PUBLIC_ARTIFACT_ROOT}")
+    fi
+    if ! "${run_without_lock[@]}" "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/render_snapshot_publication.py" "${snapshot_args[@]}"; then
+        rinfo_log "rendered snapshot publication failed; result.info not rendered"
+        return 1
+    fi
+
     if ! "${run_without_lock[@]}" "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/result_info.py" "${renderer_args[@]}"; then
         rinfo_log "result.info renderer failed (result_code=${result_code}); leaving prior file if any"
         return 1

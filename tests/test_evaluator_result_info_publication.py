@@ -107,6 +107,10 @@ def _drive_write_result_info(
     failure_reason: str | None,
     result_code_arg: str = "",
     team_id: str = "team_ref",
+    public_artifact_base_url: str | None = None,
+    public_artifact_root: Path | None = None,
+    screenshot_profiles: tuple[str, ...] = (),
+    submission_dir_name: str = "uploads",
 ) -> tuple[Path, Path, Path, subprocess.CompletedProcess[str]]:
     """Stage RUN_DIR + submission zip parent + score.json, then drive
     write_result_info via a small bash harness that sources the helper.
@@ -116,8 +120,15 @@ def _drive_write_result_info(
     run_dir = tmp_path / "results" / f"{team_id}_20260522_120000"
     run_dir.mkdir(parents=True)
     (run_dir / "score.json").write_text(json.dumps(score))
+    for profile in screenshot_profiles:
+        shots_dir = run_dir / f"{profile}_screenshots"
+        shots_dir.mkdir()
+        for idx in range(3):
+            (shots_dir / f"shot_{idx:05d}.jpg").write_bytes(
+                f"{profile}:shot_{idx:05d}".encode("ascii")
+            )
 
-    uploads_dir = tmp_path / "uploads"
+    uploads_dir = tmp_path / submission_dir_name
     uploads_dir.mkdir()
     submission_zip = uploads_dir / f"{team_id}.zip"
     submission_zip.write_text("not a real zip")
@@ -137,6 +148,10 @@ def _drive_write_result_info(
         SUBMISSION_ZIP={str(submission_zip)!r}
         FAILURE_REASON={(failure_reason or "")!r}
         HOST_FAILURE_REASON=""
+        EVALUATOR_PUBLIC_ARTIFACT_BASE_URL={(public_artifact_base_url or "")!r}
+        EVALUATOR_PUBLIC_ARTIFACT_ROOT={(str(public_artifact_root) if public_artifact_root else "")!r}
+        export EVALUATOR_PUBLIC_ARTIFACT_BASE_URL
+        export EVALUATOR_PUBLIC_ARTIFACT_ROOT
         RUN_START_NS="$(date +%s%N)"
         # Drop a small sleep so |runtime| is a non-zero positive integer
         # — this protects the assertion that runtime is recorded.
@@ -199,6 +214,77 @@ def test_successful_run_publishes_result_info_next_to_submission_zip(tmp_path):
     assert "|score|19.5" in content
     assert "Objective Score: 19.5 / 30" in content
     assert "- CPU: 3 / 5" in content
+
+
+def test_successful_run_publishes_rendered_snapshots_next_to_result_info(tmp_path):
+    public_artifact_root = tmp_path / "public-artifacts"
+    run_dir, uploads_dir, _, proc = _drive_write_result_info(
+        tmp_path=tmp_path,
+        score=_full_score_json(),
+        failure_reason=None,
+        result_code_arg="0",
+        team_id="2079591",
+        public_artifact_base_url="http://10.0.0.8:8090",
+        public_artifact_root=public_artifact_root,
+        screenshot_profiles=("2k", "4k"),
+        submission_dir_name="2079591",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+
+    assert (public_artifact_root / "2079591" / "2k-rendered.jpg").read_bytes() == b"2k:shot_00001"
+    assert (public_artifact_root / "2079591" / "4k-rendered.jpg").read_bytes() == b"4k:shot_00001"
+    assert not (uploads_dir / "2k-rendered.jpg").exists()
+    assert not (uploads_dir / "4k-rendered.jpg").exists()
+
+    score = json.loads((run_dir / "score.json").read_text())
+    assert score["rendered_snapshots"] == [
+        {
+            "profile": "2k",
+            "label": "2K",
+            "filename": "2k-rendered.jpg",
+            "url": "http://10.0.0.8:8090/2079591/2k-rendered.jpg",
+        },
+        {
+            "profile": "4k",
+            "label": "4K",
+            "filename": "4k-rendered.jpg",
+            "url": "http://10.0.0.8:8090/2079591/4k-rendered.jpg",
+        },
+    ]
+
+    info = (uploads_dir / "result.info").read_text().split("|debug|")[0]
+    assert "Rendered Snapshots:" in info
+    assert "- 2K: http://10.0.0.8:8090/2079591/2k-rendered.jpg" in info
+    assert "- 4K: http://10.0.0.8:8090/2079591/4k-rendered.jpg" in info
+
+
+def test_missing_profile_screenshot_omits_only_that_snapshot(tmp_path):
+    public_artifact_root = tmp_path / "public-artifacts"
+    run_dir, uploads_dir, _, proc = _drive_write_result_info(
+        tmp_path=tmp_path,
+        score=_full_score_json(),
+        failure_reason=None,
+        result_code_arg="0",
+        team_id="2079591",
+        public_artifact_base_url="http://10.0.0.8:8090",
+        public_artifact_root=public_artifact_root,
+        screenshot_profiles=("2k",),
+        submission_dir_name="2079591",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert (uploads_dir / "result.info").exists()
+    assert (public_artifact_root / "2079591" / "2k-rendered.jpg").exists()
+    assert not (public_artifact_root / "2079591" / "4k-rendered.jpg").exists()
+    assert not (uploads_dir / "2k-rendered.jpg").exists()
+
+    score = json.loads((run_dir / "score.json").read_text())
+    assert [item["profile"] for item in score["rendered_snapshots"]] == ["2k"]
+
+    info = (uploads_dir / "result.info").read_text().split("|debug|")[0]
+    assert "- 2K: http://10.0.0.8:8090/2079591/2k-rendered.jpg" in info
+    assert "4k-rendered.jpg" not in info
 
 
 def test_runtime_is_recorded_as_nonnegative_integer_milliseconds(tmp_path):

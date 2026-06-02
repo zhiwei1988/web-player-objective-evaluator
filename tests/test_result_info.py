@@ -226,9 +226,57 @@ def test_info_appends_execution_feedback_after_scoring_items():
     fields = _parse_fields(text)
     info = fields["info"]
 
-    assert "- CPU: 0 / 5\n\nExecution Feedback:" in info
+    assert "- CPU: 0 / 5" in info
+    assert "Runtime Metrics:" in info
+    assert "Execution Feedback:" in info
+    assert info.index("Runtime Metrics:") < info.index("Execution Feedback:")
     assert "- Frontend did not become reachable." in info
     assert "- npm ERR! missing script: start" in info
+
+
+def test_info_appends_rendered_snapshot_links_when_present():
+    score = _full_score()
+    score["rendered_snapshots"] = [
+        {
+            "profile": "2k",
+            "label": "2K",
+            "filename": "2k-rendered.jpg",
+            "url": "http://10.0.0.8:8090/2079591/2k-rendered.jpg",
+        },
+        {
+            "profile": "4k",
+            "label": "4K",
+            "filename": "4k-rendered.jpg",
+            "url": "http://10.0.0.8:8090/2079591/4k-rendered.jpg",
+        },
+    ]
+
+    text = result_info.render(score=score, runtime_ms=42, run_dir="/r")
+    fields = _parse_fields(text)
+    info = fields["info"]
+
+    assert "Rendered Snapshots:" in info
+    assert "- 2K: http://10.0.0.8:8090/2079591/2k-rendered.jpg" in info
+    assert "- 4K: http://10.0.0.8:8090/2079591/4k-rendered.jpg" in info
+    assert info.index("Runtime Metrics:") < info.index("Rendered Snapshots:")
+
+
+def test_info_omits_rendered_snapshots_when_metadata_missing():
+    score = _full_score(four_k_fps_points=1.5, objective_total=19.5, cpu_points=3)
+    score["contestant_feedback"] = ["Frontend did not become reachable."]
+
+    text = result_info.render(score=score, runtime_ms=42, run_dir="/r")
+    fields = _parse_fields(text)
+    info = fields["info"]
+
+    assert "Rendered Snapshots:" not in info
+    assert "Objective Score: 19.5 / 30" in info
+    assert "- CPU: 3 / 5" in info
+    assert "Runtime Metrics:" in info
+    assert "2k: measured_fps=20" in info
+    assert "cpu: mean_percent=3.2" in info
+    assert "Execution Feedback:" in info
+    assert "- Frontend did not become reachable." in info
 
 
 @pytest.mark.parametrize("feedback", [None, [], "", ["", "   "]])
@@ -256,7 +304,6 @@ def test_execution_feedback_does_not_copy_internal_debug_fields_into_info():
     assert "Submission frontend did not become reachable." in info
     assert "/results/team_ref_20260522" not in info
     assert "Chromium 131.0.6778.85" not in info
-    assert "measured_fps" not in info
     assert "gate_fps_ratio" not in info
     assert "contestant_frontend_unavailable" not in info
 
@@ -394,8 +441,9 @@ def test_debug_includes_per_profile_diagnostics_when_present():
     # Per-profile diagnostics go in debug, never in info.
     assert "measured_fps" in fields["debug"]
     assert "watermark" in fields["debug"]
-    # And do not leak into info.
-    assert "measured_fps" not in fields["info"]
+    # High-level runtime metrics are intentionally contestant-facing; detailed
+    # recognition diagnostics stay in debug.
+    assert "measured_fps" in fields["info"]
     assert "watermark" not in fields["info"]
     assert "ssim" not in fields["info"]
 
