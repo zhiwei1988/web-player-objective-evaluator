@@ -851,7 +851,7 @@ The evaluator SHALL write a run-level machine-readable stage timing artifact und
 
 ### Requirement: Capture Layout Diagnostics
 
-`runner.py` SHALL write structured capture layout diagnostics into each profile's `timestamps.json`. The diagnostics SHALL be collected at least after readiness and before the steady-state screenshot loop, and SHALL be collected on readiness timeout when the page is reachable. The diagnostics SHALL be bounded and SHALL NOT dump the full DOM.
+`runner.py` SHALL write structured capture layout diagnostics into each profile's `timestamps.json`. After readiness, once the final capture clip and layout diagnostics have been computed, `runner.py` SHALL also immediately write the same diagnostic payload to `layout_diagnostics.json` in the profile screenshot directory before entering the steady-state screenshot loop. The diagnostics SHALL be collected at least after readiness and before the steady-state screenshot loop, and SHALL be collected on readiness timeout when the page is reachable. The diagnostics SHALL be bounded and SHALL NOT dump the full DOM.
 
 The diagnostics SHALL include at least: navigated URL, browser viewport, device pixel ratio, page scroll offsets, `document.readyState`, `window.__PLAYER_READY__`, `window.__PLAYER_ERROR__`, the final capture clip, the `[data-testid="player-video"]` host element bounding box and client/scroll/offset dimensions, selected host computed styles relevant to clipping and scaling, and a bounded list of descendant `<canvas>` and `<video>` elements with their bounding boxes, client dimensions, intrinsic media/canvas dimensions, IDs, data-testid values, and selected computed styles.
 
@@ -861,6 +861,7 @@ The diagnostics SHALL include derived warnings when the observed layout suggests
 
 - **WHEN** the contestant frontend reaches readiness and the player element is captured
 - **THEN** `timestamps.json` contains `layout_diagnostics` with viewport, device pixel ratio, player host metrics, final clip, and a bounded list of descendant media/canvas metrics
+- **THEN** `<profile>_screenshots/layout_diagnostics.json` contains the same diagnostic payload before the steady-state screenshot loop begins
 
 #### Scenario: Oversized canvas inside clipped host is flagged
 
@@ -879,7 +880,7 @@ The diagnostics SHALL include derived warnings when the observed layout suggests
 
 ### Requirement: Runtime Diagnostics Surfacing
 
-The evaluator SHALL surface stage timing, timeout, and capture layout diagnostics in organizer-facing artifacts without changing contestant-facing scoring semantics. `report.html` SHALL include a compact per-profile diagnostic summary and links to raw diagnostic artifacts. `scripts/diagnose_run.py` SHALL include stage timing and layout warning summaries when those artifacts are present, while continuing to handle older result directories where the new fields are absent.
+The evaluator SHALL surface stage timing, timeout, and capture layout diagnostics in organizer-facing artifacts without changing contestant-facing scoring semantics. `report.html` SHALL include a compact per-profile diagnostic summary and links to raw diagnostic artifacts. `scripts/diagnose_run.py` SHALL include stage timing and layout warning summaries when those artifacts are present, while continuing to handle older result directories where the new fields are absent. When `timestamps.json` is absent or lacks `layout_diagnostics`, organizer-facing diagnostics SHALL fall back to the standalone `<profile>_screenshots/layout_diagnostics.json` artifact when present.
 
 `result.info` SHALL remain concise. It MAY include timeout/profile reasons and high-signal debug summaries, but SHALL NOT expose full layout diagnostics or internal browser logs as contestant-facing information.
 

@@ -88,6 +88,20 @@ def test_diagnose_run_reports_stage_timings_and_layout_warnings(tmp_path):
     assert "2k: descendant canvas is larger than clipped host" in report
 
 
+def test_diagnose_run_reads_standalone_layout_diagnostics_when_timestamps_missing(tmp_path):
+    run = tmp_path / "results" / "self_20260521_120000"
+    shots = run / "2k_screenshots"
+    shots.mkdir(parents=True)
+    (shots / "layout_diagnostics.json").write_text(json.dumps({
+        "warnings": ["canvas element is larger than clipped host"]
+    }))
+
+    report = build_report(run, include_host=False)
+
+    assert "Layout warnings:" in report
+    assert "2k: canvas element is larger than clipped host" in report
+
+
 def test_diagnose_run_reports_contestant_memory_limit_metadata(tmp_path):
     run = tmp_path / "results" / "self_20260521_120000"
     run.mkdir(parents=True)

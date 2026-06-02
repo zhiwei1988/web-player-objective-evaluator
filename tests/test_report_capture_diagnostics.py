@@ -123,6 +123,34 @@ def test_report_renders_stage_timeout_and_layout_warnings(tmp_path):
     assert "4k_screenshots/timestamps.json" in html
 
 
+def test_report_reads_standalone_layout_diagnostics_when_timestamps_missing(tmp_path):
+    score = {
+        "objective_total": 0,
+        "max_score": 30,
+        "chromium_version": "test",
+        "2k": {"reason": "capture interrupted"},
+        "4k": None,
+        "cpu": {"points": 0, "gated": True, "gate_reason": "2k_round_failed"},
+    }
+    shots = tmp_path / "2k_screenshots"
+    shots.mkdir()
+    (shots / "layout_diagnostics.json").write_text(json.dumps({
+        "warnings": ["canvas element is larger than clipped host"],
+    }))
+    out = tmp_path / "report.html"
+
+    report.render_report(
+        score=score,
+        profile_metrics={"2k": None, "4k": None},
+        output=out,
+        run_dir=tmp_path,
+    )
+
+    html = out.read_text()
+    assert "canvas element is larger than clipped host" in html
+    assert "2k_screenshots/layout_diagnostics.json" in html
+
+
 def test_report_renders_contestant_memory_limit_metadata(tmp_path):
     score = {
         "objective_total": 0,

@@ -130,6 +130,33 @@ def test_timestamps_include_layout_diagnostics(tmp_path):
     assert out["layout_diagnostics"]["warnings"] == ["no descendant canvas/video elements found"]
 
 
+def test_write_layout_diagnostics_writes_standalone_file(tmp_path):
+    result = runner.CaptureResult(
+        success=True,
+        clip={"x": 0, "y": 0, "width": 1280, "height": 720},
+    )
+    result.layout_diagnostics = {
+        "clip": result.clip,
+        "host": {"bbox": {"width": 1280, "height": 720}},
+        "warnings": ["canvas element is larger than clipped host"],
+    }
+
+    runner._write_layout_diagnostics(tmp_path, result)
+
+    out = json.loads((tmp_path / "layout_diagnostics.json").read_text())
+    assert out["clip"]["width"] == 1280
+    assert out["host"]["bbox"]["height"] == 720
+    assert out["warnings"] == ["canvas element is larger than clipped host"]
+
+
+def test_write_layout_diagnostics_noop_when_absent(tmp_path):
+    result = runner.CaptureResult(success=True)
+
+    runner._write_layout_diagnostics(tmp_path, result)
+
+    assert not (tmp_path / "layout_diagnostics.json").exists()
+
+
 def test_layout_warning_for_oversized_canvas_in_clipped_host():
     diagnostics = {
         "ready": True,

@@ -268,6 +268,7 @@ def run_capture(
             return result
         result.clip = clip
         result.layout_diagnostics = _collect_layout_diagnostics(page, clip)
+        _write_layout_diagnostics(output, result)
 
         # Capture loop. JPEG quality=90 is visually indistinguishable from PNG
         # for our watermarked test pattern but encodes ~3x faster, which is
@@ -812,6 +813,16 @@ def _write_capture_meta(output: Path, profile: str, result: CaptureResult) -> No
         "cpu": cpu,
     }
     (output / "capture_meta.json").write_text(json.dumps(meta, indent=2))
+
+
+def _write_layout_diagnostics(output: Path, result: CaptureResult) -> None:
+    diagnostics = result.layout_diagnostics
+    if diagnostics is None:
+        return
+    path = output / "layout_diagnostics.json"
+    tmp = output / ".layout_diagnostics.json.tmp"
+    tmp.write_text(json.dumps(diagnostics, indent=2))
+    tmp.replace(path)
 
 
 def _write_timestamps(output: Path, result: CaptureResult) -> None:

@@ -133,13 +133,23 @@ def stage_timing_section(run_dir: Path) -> str | None:
 def layout_warning_section(run_dir: Path) -> str | None:
     lines = ["Layout warnings:"]
     found = False
-    for ts_path in sorted(run_dir.glob("*_screenshots/timestamps.json")):
-        profile = ts_path.parent.name.removesuffix("_screenshots")
-        try:
-            data = load_json(ts_path)
-        except Exception:
-            continue
-        layout = data.get("layout_diagnostics") or {}
+    for shots_dir in sorted(run_dir.glob("*_screenshots")):
+        profile = shots_dir.name.removesuffix("_screenshots")
+        layout = {}
+        ts_path = shots_dir / "timestamps.json"
+        if ts_path.exists():
+            try:
+                data = load_json(ts_path)
+                layout = data.get("layout_diagnostics") or {}
+            except Exception:
+                layout = {}
+        if not layout:
+            standalone_path = shots_dir / "layout_diagnostics.json"
+            if standalone_path.exists():
+                try:
+                    layout = load_json(standalone_path)
+                except Exception:
+                    layout = {}
         warnings = layout.get("warnings") or []
         for warning in warnings:
             lines.append(f"  {profile}: {warning}")

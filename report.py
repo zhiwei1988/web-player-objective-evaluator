@@ -220,24 +220,35 @@ def _stage_diagnostics_section(run_dir: Path) -> str:
 '''
 
 
-def _layout_diagnostics_section(profile: str, run_dir: Path) -> str:
+def _read_profile_layout_diagnostics(profile: str, run_dir: Path) -> tuple[dict | None, str]:
     timestamps = _read_json(run_dir / f"{profile}_screenshots" / "timestamps.json")
     layout = (timestamps or {}).get("layout_diagnostics")
-    if not isinstance(layout, dict):
+    if isinstance(layout, dict):
+        return layout, f"{profile}_screenshots/timestamps.json"
+    standalone = _read_json(run_dir / f"{profile}_screenshots" / "layout_diagnostics.json")
+    if isinstance(standalone, dict):
+        return standalone, f"{profile}_screenshots/layout_diagnostics.json"
+    return None, f"{profile}_screenshots/timestamps.json"
+
+
+def _layout_diagnostics_section(profile: str, run_dir: Path) -> str:
+    layout, raw_href = _read_profile_layout_diagnostics(profile, run_dir)
+    if layout is None:
         return ""
     warnings = [str(w) for w in (layout.get("warnings") or []) if str(w)]
+    raw_label = Path(raw_href).name
     if not warnings:
         return f'''
   <h3>Layout diagnostics</h3>
-  <p>no layout warnings — <a href="{profile}_screenshots/timestamps.json">timestamps.json</a></p>
+  <p>no layout warnings — <a href="{html.escape(raw_href)}">{html.escape(raw_label)}</a></p>
 '''
     items = "".join(f"<li>{html.escape(w)}</li>" for w in warnings[:12])
     if len(warnings) > 12:
-        items += "<li>additional warnings omitted here; see timestamps.json</li>"
+        items += f"<li>additional warnings omitted here; see {html.escape(raw_label)}</li>"
     return f'''
   <h3>Layout diagnostics</h3>
   <ul>{items}</ul>
-  <p><a href="{profile}_screenshots/timestamps.json">timestamps.json</a></p>
+  <p><a href="{html.escape(raw_href)}">{html.escape(raw_label)}</a></p>
 '''
 
 
