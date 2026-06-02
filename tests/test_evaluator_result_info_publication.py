@@ -213,7 +213,7 @@ def test_successful_run_publishes_result_info_next_to_submission_zip(tmp_path):
     assert "|result|0" in content
     assert "|score|19.5" in content
     assert "Objective Score: 19.5 / 30" in content
-    assert "- CPU: 3 / 5" in content
+    assert "- CPU: 3.00 / 5" in content
 
 
 def test_successful_run_publishes_rendered_snapshots_next_to_result_info(tmp_path):
@@ -287,6 +287,45 @@ def test_missing_profile_screenshot_omits_only_that_snapshot(tmp_path):
     assert "4k-rendered.jpg" not in info
 
 
+def test_successful_run_publishes_decode_path_violation_info(tmp_path):
+    score = _full_score_json()
+    score["objective_total"] = 0
+    score["2k"]["correctness_points"] = 0
+    score["2k"]["fps_points"] = 0
+    score["2k"]["total"] = 0
+    score["2k"]["decode_path"] = {
+        "verdict": "violation",
+        "checks": {
+            "video_decoder_active": True,
+            "video_decoder_codec": "FFmpegVideoDecoder",
+            "sink_codecs": ["avc", "hevc"],
+        },
+        "evidence": [
+            "sink:websocket:hevc",
+            "sink:appendBuffer:avc",
+            "video_decoder:FFmpegVideoDecoder:frames=0:present=True",
+        ],
+    }
+
+    run_dir, uploads_dir, _, proc = _drive_write_result_info(
+        tmp_path=tmp_path,
+        score=score,
+        failure_reason=None,
+        result_code_arg="0",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    audit = run_dir / "result.info"
+    published = uploads_dir / "result.info"
+    assert audit.read_bytes() == published.read_bytes()
+
+    info = audit.read_text().split("|debug|")[0]
+    assert "Decode Path Violations:" in info
+    assert "- 2K: browser decode path received H.264/AVC instead of H.265" in info
+    assert "sink:appendBuffer" not in info
+    assert "FFmpegVideoDecoder" not in info
+
+
 def test_runtime_is_recorded_as_nonnegative_integer_milliseconds(tmp_path):
     run_dir, _, _, proc = _drive_write_result_info(
         tmp_path=tmp_path,
@@ -330,7 +369,7 @@ def test_contestant_side_failure_publishes_with_result_zero(tmp_path):
     assert "|score|0" in content
     assert "Objective Score: 0 / 30" in content
     assert "- 2K Correctness: 0 / 5" in content
-    assert "- CPU: 0 / 5" in content
+    assert "- CPU: 0.00 / 5" in content
     # Raw reason stays out of the contestant-visible info block.
     assert "contestant_frontend_unavailable" not in content.split("|debug|")[0]
     # And appears in debug.

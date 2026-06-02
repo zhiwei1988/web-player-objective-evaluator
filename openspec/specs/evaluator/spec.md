@@ -559,11 +559,11 @@ Breakdown:
 - 2K FPS: 5 / 5
 - 4K Correctness: 5 / 5
 - 4K FPS: 3.0 / 10
-- CPU: 3 / 5
+- CPU: 3.00 / 5
 |debug|...
 ```
 
-`score` SHALL equal `score.json.objective_total` formatted without unnecessary trailing zeroes. `runtime` SHALL be the evaluator wall-clock runtime in milliseconds for the current invocation. `info` SHALL be contestant-visible and SHALL contain the total objective score, the five scoring item point values (2K correctness, 2K FPS, 4K correctness, 4K FPS, and CPU), and, when available for contestant-side execution failures, a concise sanitized `Execution Feedback:` section. `debug` SHALL be organizer-facing and MAY contain multi-line diagnostics such as run directory, failure reason, per-profile metrics, CPU gate details, and Chromium version.
+`score` SHALL equal `score.json.objective_total` formatted without unnecessary trailing zeroes. `runtime` SHALL be the evaluator wall-clock runtime in milliseconds for the current invocation. `info` SHALL be contestant-visible and SHALL contain the total objective score, the five scoring item point values (2K correctness, 2K FPS, 4K correctness, 4K FPS, and CPU), and, when available for contestant-side execution failures, a concise sanitized `Execution Feedback:` section. The CPU item score SHALL be formatted with exactly two digits after the decimal point. `debug` SHALL be organizer-facing and MAY contain multi-line diagnostics such as run directory, failure reason, per-profile metrics, CPU gate details, and Chromium version.
 
 `result` SHALL be `0` when the evaluator produced a valid contestant result, including valid zero-score outcomes caused by the contestant submission. `result` SHALL be `1` when an evaluator, host, infrastructure, or publication failure makes the score untrustworthy.
 
@@ -584,7 +584,7 @@ The evaluator SHALL NOT place raw internal diagnostics in `info`. Contestant-vis
 - **THEN** `result.info` exists in the run directory and in `dirname <submission_zip>`
 - **THEN** `|result|0` is written
 - **THEN** `|score|0` is written
-- **THEN** the `info` block shows `Objective Score: 0 / 30` and all five scoring items as `0 / <max>`
+- **THEN** the `info` block shows `Objective Score: 0 / 30`, the CPU item as `0.00 / 5`, and the remaining scoring items as `0 / <max>`
 - **THEN** the `info` block includes an `Execution Feedback:` section when sanitized contestant feedback is available
 - **THEN** the internal raw failure reason appears in `debug`
 

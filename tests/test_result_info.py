@@ -101,6 +101,17 @@ def _full_score(
     }
 
 
+def _with_decode_path(block: dict, verdict: str, *, checks: dict | None = None,
+                      evidence: list[str] | None = None) -> dict:
+    block = dict(block)
+    block["decode_path"] = {
+        "verdict": verdict,
+        "checks": checks or {},
+        "evidence": evidence or [],
+    }
+    return block
+
+
 def _failure_score(reason: str, *, chromium_version: str = "Chromium 131.0.6778.85") -> dict:
     """Mirror what scorer.build_score emits for a write_failure_score path."""
     return {
@@ -213,7 +224,16 @@ def test_info_lists_all_five_scoring_items_normal_run():
     assert "- 2K FPS: 5 / 5" in info
     assert "- 4K Correctness: 5 / 5" in info
     assert "- 4K FPS: 1.5 / 10" in info
-    assert "- CPU: 3 / 5" in info
+    assert "- CPU: 3.00 / 5" in info
+
+
+def test_info_formats_cpu_scoring_item_with_two_decimal_places():
+    score = _full_score(four_k_fps_points=1.5, objective_total=19.25, cpu_points=3)
+    score["cpu"]["points"] = 3.25
+    text = result_info.render(score=score, runtime_ms=42, run_dir="/r")
+    fields = _parse_fields(text)
+
+    assert "- CPU: 3.25 / 5" in fields["info"]
 
 
 def test_info_appends_execution_feedback_after_scoring_items():
@@ -226,7 +246,7 @@ def test_info_appends_execution_feedback_after_scoring_items():
     fields = _parse_fields(text)
     info = fields["info"]
 
-    assert "- CPU: 0 / 5" in info
+    assert "- CPU: 0.00 / 5" in info
     assert "Runtime Metrics:" in info
     assert "Execution Feedback:" in info
     assert info.index("Runtime Metrics:") < info.index("Execution Feedback:")
@@ -271,7 +291,7 @@ def test_info_omits_rendered_snapshots_when_metadata_missing():
 
     assert "Rendered Snapshots:" not in info
     assert "Objective Score: 19.5 / 30" in info
-    assert "- CPU: 3 / 5" in info
+    assert "- CPU: 3.00 / 5" in info
     assert "Runtime Metrics:" in info
     assert "2k: measured_fps=20" in info
     assert "cpu: mean_percent=3.2" in info
@@ -287,6 +307,106 @@ def test_info_omits_execution_feedback_when_absent_or_empty(feedback):
     text = result_info.render(score=score, runtime_ms=42, run_dir="/r")
     fields = _parse_fields(text)
     assert "Execution Feedback:" not in fields["info"]
+
+
+# ---------------------------------------------------------------------------
+# 1.3 Decode-path violation feedback
+# ---------------------------------------------------------------------------
+
+def test_info_surfaces_2k_decode_path_violation():
+    score = _full_score(objective_total=0, cpu_points=0)
+    score["2k"] = _with_decode_path(
+        score["2k"],
+        "violation",
+        checks={
+            "video_decoder_active": True,
+            "video_decoder_codec": "FFmpegVideoDecoder",
+            "sink_codecs": ["avc", "hevc"],
+        },
+        evidence=[
+            "sink:websocket:hevc",
+            "sink:appendBuffer:avc",
+            "video_decoder:FFmpegVideoDecoder:frames=0:present=True",
+        ],
+    )
+
+    text = result_info.render(score=score, runtime_ms=42, run_dir="/r")
+    info = _parse_fields(text)["info"]
+
+    assert "Decode Path Violations:" in info
+    assert "- 2K: browser decode path received H.264/AVC instead of H.265" in info
+
+
+def test_info_surfaces_each_decode_path_violation_once():
+    score = _full_score(objective_total=0, cpu_points=0)
+    score["2k"] = _with_decode_path(
+        score["2k"],
+        "violation",
+        checks={"sink_codecs": ["avc"]},
+        evidence=["sink:appendBuffer:avc"],
+    )
+    score["4k"] = _with_decode_path(
+        score["4k"],
+        "violation",
+        checks={"video_decoder_active": True, "sink_codecs": []},
+        evidence=["video_decoder:FFmpegVideoDecoder:frames=0:present=True"],
+    )
+
+    text = result_info.render(score=score, runtime_ms=42, run_dir="/r")
+    info = _parse_fields(text)["info"]
+    violation_lines = [
+        line for line in info.splitlines()
+        if line.startswith("- 2K:") or line.startswith("- 4K:")
+    ]
+
+    assert "Decode Path Violations:" in info
+    assert violation_lines == [
+        "- 2K: browser decode path received H.264/AVC instead of H.265",
+        "- 4K: browser video decoder was active on an HEVC-incapable host",
+    ]
+
+
+def test_info_omits_decode_path_section_for_non_violations():
+    score = _full_score()
+    score["2k"] = _with_decode_path(score["2k"], "ok", checks={"sink_codecs": ["hevc"]})
+    score["4k"] = _with_decode_path(score["4k"], "inconclusive", checks={})
+
+    text = result_info.render(score=score, runtime_ms=42, run_dir="/r")
+    info = _parse_fields(text)["info"]
+
+    assert "Decode Path Violations:" not in info
+
+
+def test_decode_path_violation_info_is_sanitized():
+    score = _full_score(chromium_version="Chromium 131.0.6778.85", objective_total=0, cpu_points=0)
+    score["2k"] = _with_decode_path(
+        score["2k"],
+        "violation",
+        checks={
+            "video_decoder_active": True,
+            "video_decoder_codec": "FFmpegVideoDecoder",
+            "sink_codecs": ["jpeg"],
+            "run_dir": "/root/workspace/web-player-objective-evaluator/results/team_x",
+        },
+        evidence=[
+            "sink:appendBuffer:jpeg",
+            "video_decoder:FFmpegVideoDecoder:frames=0:present=True",
+            "/root/workspace/web-player-objective-evaluator/results/team_x",
+        ],
+    )
+
+    text = result_info.render(score=score, runtime_ms=42, run_dir="/r")
+    info = _parse_fields(text)["info"]
+
+    assert "Decode Path Violations:" in info
+    assert "- 2K:" in info
+    assert "sink:appendBuffer" not in info
+    assert "FFmpegVideoDecoder" not in info
+    assert "Chromium 131.0.6778.85" not in info
+    assert "/root/workspace" not in info
+    assert "watermark" not in info
+    assert "ssim" not in info
+    assert "gate_fps_ratio" not in info
 
 
 def test_execution_feedback_does_not_copy_internal_debug_fields_into_info():
@@ -359,7 +479,7 @@ def test_contestant_failure_renders_zero_items_and_keeps_result_zero():
     assert "- 2K FPS: 0 / 5" in info
     assert "- 4K Correctness: 0 / 5" in info
     assert "- 4K FPS: 0 / 10" in info
-    assert "- CPU: 0 / 5" in info
+    assert "- CPU: 0.00 / 5" in info
 
 
 def test_contestant_failure_keeps_raw_reason_out_of_info_block():
@@ -509,7 +629,7 @@ def test_cli_writes_result_info(tmp_path):
     assert fields["score"] == "19.5"
     assert fields["runtime"] == "64231"
     assert "Objective Score: 19.5 / 30" in fields["info"]
-    assert "- CPU: 3 / 5" in fields["info"]
+    assert "- CPU: 3.00 / 5" in fields["info"]
 
 
 def test_cli_respects_explicit_result_code_one(tmp_path):

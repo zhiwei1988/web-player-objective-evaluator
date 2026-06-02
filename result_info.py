@@ -10,8 +10,9 @@ final multi-line organizer-facing field.
 artifact) and is intentionally lossy:
 
 - `info` is contestant-visible: total score, the five scoring item point
-  values (2K correctness, 2K FPS, 4K correctness, 4K FPS, CPU), and optional
-  sanitized execution feedback for contestant-side failures.
+  values (2K correctness, 2K FPS, 4K correctness, 4K FPS, CPU), optional
+  decode-path violation summaries, and optional sanitized execution feedback for
+  contestant-side failures.
 - `debug` is organizer-facing: run directory, top-level reason, per-profile
   measured diagnostics, CPU gate diagnostics, and Chromium version.
 
@@ -46,6 +47,8 @@ CONTESTANT_SIDE_FAILURE_REASONS: frozenset[str] = frozenset({
     "contestant_memory_limit_exceeded",
 })
 
+_PROFILE_LABELS: dict[str, str] = {"2k": "2K", "4k": "4K"}
+
 
 def _fmt_num(value: Any) -> str:
     """Format a number without unnecessary trailing zeroes.
@@ -64,6 +67,19 @@ def _fmt_num(value: Any) -> str:
     return str(value)
 
 
+def _fmt_fixed2(value: Any) -> str:
+    if value is None:
+        return "0.00"
+    if isinstance(value, bool):
+        return f"{float(value):.2f}"
+    if isinstance(value, (int, float)):
+        return f"{float(value):.2f}"
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return "0.00"
+
+
 def classify_result_code(reason: str | None) -> int:
     """Return 0 for contestant-side outcomes, 1 for infra/evaluator failures.
 
@@ -72,6 +88,32 @@ def classify_result_code(reason: str | None) -> int:
     if not reason:
         return 0
     return 0 if reason in CONTESTANT_SIDE_FAILURE_REASONS else 1
+
+
+def _decode_path_reason(decode_path: dict) -> str:
+    checks = decode_path.get("checks") or {}
+    sink_codecs = {str(item).lower() for item in (checks.get("sink_codecs") or [])}
+    evidence = [str(item).lower() for item in (decode_path.get("evidence") or [])]
+
+    if "avc" in sink_codecs or any(":avc" in item or "avc1" in item or "avc3" in item for item in evidence):
+        return "browser decode path received H.264/AVC instead of H.265"
+    if "jpeg" in sink_codecs or any(":jpeg" in item or "image/jpeg" in item for item in evidence):
+        return "browser decode path received decoded/JPEG frames instead of H.265"
+    if checks.get("video_decoder_active") or any(item.startswith("video_decoder:") for item in evidence):
+        return "browser video decoder was active on an HEVC-incapable host"
+    return "decode-path violation detected"
+
+
+def _decode_path_violation_lines(score: dict) -> list[str]:
+    lines: list[str] = []
+    for profile_key in ("2k", "4k"):
+        block = score.get(profile_key) or {}
+        decode_path = block.get("decode_path") or {}
+        if decode_path.get("verdict") != "violation":
+            continue
+        label = _PROFILE_LABELS[profile_key]
+        lines.append(f"- {label}: {_decode_path_reason(decode_path)}")
+    return lines
 
 
 def _build_info_lines(score: dict) -> list[str]:
@@ -89,7 +131,8 @@ def _build_info_lines(score: dict) -> list[str]:
             pts = block.get(points_key)
         if pts is None:
             pts = 0
-        lines.append(f"- {label}: {_fmt_num(pts)} / {_fmt_num(max_pts)}")
+        pts_text = _fmt_fixed2(pts) if profile_key is None else _fmt_num(pts)
+        lines.append(f"- {label}: {pts_text} / {_fmt_num(max_pts)}")
 
     info_metrics: list[str] = []
     score_2k = score.get("2k") or {}
@@ -104,6 +147,11 @@ def _build_info_lines(score: dict) -> list[str]:
     if info_metrics:
         lines.extend(["", "Runtime Metrics:"])
         lines.extend(info_metrics)
+
+    decode_violation_lines = _decode_path_violation_lines(score)
+    if decode_violation_lines:
+        lines.extend(["", "Decode Path Violations:"])
+        lines.extend(decode_violation_lines)
 
     snapshot_lines: list[str] = []
     snapshots = score.get("rendered_snapshots")
