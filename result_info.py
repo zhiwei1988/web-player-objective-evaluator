@@ -91,6 +91,20 @@ def _build_info_lines(score: dict) -> list[str]:
             pts = 0
         lines.append(f"- {label}: {_fmt_num(pts)} / {_fmt_num(max_pts)}")
 
+    info_metrics: list[str] = []
+    score_2k = score.get("2k") or {}
+    score_4k = score.get("4k") or {}
+    score_cpu = score.get("cpu") or {}
+    if score_2k.get("measured_fps") is not None:
+        info_metrics.append(f"2k: measured_fps={_fmt_num(score_2k['measured_fps'])}")
+    if score_4k.get("measured_fps") is not None:
+        info_metrics.append(f"4k: measured_fps={_fmt_num(score_4k['measured_fps'])}")
+    if score_cpu.get("mean_percent") is not None:
+        info_metrics.append(f"cpu: mean_percent={_fmt_num(score_cpu['mean_percent'])}")
+    if info_metrics:
+        lines.extend(["", "Runtime Metrics:"])
+        lines.extend(info_metrics)
+
     feedback = score.get("contestant_feedback")
     if isinstance(feedback, str):
         feedback_lines = [feedback.strip()] if feedback.strip() else []
