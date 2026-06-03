@@ -22,27 +22,27 @@ def fps_at(ratio: float) -> float:
 @pytest.mark.parametrize(
     "mean_cpu, expected_points",
     [
-        (0.0, 5),
-        (4.99, 5),
-        (5.0, 5),
-        (5.5, 5),
-        (6.0, 5),
-        (7.0, 5),
-        (8.0, 4),
-        (9.0, 4),
-        (10.0, 4),
-        (11.0, 3),
-        (12.0, 3),
-        (13.0, 2),
-        (14.0, 2),
-        (15.0, 2),
-        (16.0, 1),
-        (17.0, 1),
-        (18.0, 1),
-        (19.0, 0),
-        (20.0, 0),
-        (20.001, 0),
-        (99.0, 0),
+        (0.0, 5.0),
+        (4.99, 5.0),
+        (5.0, 5.0),
+        (5.5, 5.0),
+        (6.0, 5.0),
+        (7.0, 4.64),
+        (8.0, 4.29),
+        (9.0, 3.93),
+        (10.0, 3.57),
+        (11.0, 3.21),
+        (12.0, 2.86),
+        (13.0, 2.5),
+        (14.0, 2.14),
+        (15.0, 1.79),
+        (16.0, 1.43),
+        (17.0, 1.07),
+        (18.0, 0.71),
+        (19.0, 0.36),
+        (20.0, 0.0),
+        (20.001, 0.0),
+        (99.0, 0.0),
     ],
 )
 def test_score_cpu_table(mean_cpu, expected_points):
@@ -62,7 +62,7 @@ def test_score_cpu_gates_when_fps_below_threshold():
         measured_fps=fps_at(0.24),
         gate_fps_ratio=0.25,
     )
-    assert points == 0
+    assert points == 0.0
     assert reason == "2k_fps_below_threshold"
 
 
@@ -72,7 +72,7 @@ def test_score_cpu_default_gate_trips_just_below_065():
         mean_cpu_percent=2.0,
         measured_fps=fps_at(0.64),
     )
-    assert points == 0
+    assert points == 0.0
     assert reason == "2k_fps_below_threshold"
 
 
@@ -82,7 +82,7 @@ def test_score_cpu_default_gate_passes_just_above_065():
         mean_cpu_percent=2.0,
         measured_fps=fps_at(0.66),
     )
-    assert points == 5
+    assert points == 5.0
     assert reason is None
 
 
@@ -93,7 +93,7 @@ def test_score_cpu_default_gate_trips_when_only_partial_fps_credit():
         mean_cpu_percent=0.0,
         measured_fps=fps_at(0.50),
     )
-    assert points == 0
+    assert points == 0.0
     assert reason == "2k_fps_below_threshold"
 
 
@@ -102,7 +102,7 @@ def test_score_cpu_gates_when_sampler_missing():
         mean_cpu_percent=None,
         measured_fps=fps_at(0.9),
     )
-    assert points == 0
+    assert points == 0.0
     assert reason == "sampler_no_data"
 
 
@@ -112,7 +112,7 @@ def test_score_cpu_gate_takes_precedence_over_value():
         measured_fps=fps_at(0.10),
         gate_fps_ratio=0.25,
     )
-    assert points == 0
+    assert points == 0.0
     assert reason == "2k_fps_below_threshold"
 
 
@@ -160,7 +160,7 @@ def test_build_score_objective_total_includes_cpu():
     assert out["objective_total"] == 30
     assert out["2k"]["total"] == 10
     assert out["4k"]["total"] == 15
-    assert out["cpu"]["points"] == 5
+    assert out["cpu"]["points"] == 5.0
     assert out["cpu"]["gated"] is False
     assert out["cpu"]["gate_reason"] is None
     assert out["cpu"]["measured_on_profile"] == "2k"
@@ -196,7 +196,7 @@ def test_build_score_2k_round_failed_gates_cpu():
         {"2k": None, "4k": _profile_full()},
         chromium_version="test",
     )
-    assert out["cpu"]["points"] == 0
+    assert out["cpu"]["points"] == 0.0
     assert out["cpu"]["gated"] is True
     assert out["cpu"]["gate_reason"] == "2k_round_failed"
     assert out["cpu"]["mean_percent"] is None
@@ -208,7 +208,7 @@ def test_build_score_sampler_no_data_gates_cpu():
         {"2k": _profile_full(), "4k": _profile_full()},
         chromium_version="test",
     )
-    assert out["cpu"]["points"] == 0
+    assert out["cpu"]["points"] == 0.0
     assert out["cpu"]["gated"] is True
     assert out["cpu"]["gate_reason"] == "sampler_no_data"
 
@@ -220,7 +220,7 @@ def test_build_score_container_mode_unsupported():
         failure_reason=None,
         cpu_override_reason="container_mode_unsupported",
     )
-    assert out["cpu"]["points"] == 0
+    assert out["cpu"]["points"] == 0.0
     assert out["cpu"]["gated"] is True
     assert out["cpu"]["gate_reason"] == "container_mode_unsupported"
 

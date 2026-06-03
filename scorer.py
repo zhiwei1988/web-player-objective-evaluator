@@ -75,10 +75,10 @@ CPU_GATE_FPS_RATIO: float = 0.65
 """measured sampled-profile fps / expected fps below this -> CPU score gated to 0."""
 
 CPU_FULL_THRESHOLD_PERCENT: float = 5.0
-"""mean_cpu_percent at or below this → full 10 points."""
+"""mean_cpu_percent at or below this → full 5 points."""
 
 CPU_PARTIAL_START_PERCENT: float = 6.0
-"""Anchor of the linear-decay partial-credit band; >5% to <6% clamps to 10."""
+"""Anchor of the linear-decay partial-credit band."""
 
 CPU_ZERO_THRESHOLD_PERCENT: float = 20.0
 """mean_cpu_percent above this → 0 points."""
@@ -253,7 +253,7 @@ def score_cpu(
     measured_fps: float,
     expected_fps: float | None = None,
     gate_fps_ratio: float = CPU_GATE_FPS_RATIO,
-) -> tuple[int, str | None]:
+) -> tuple[float, str | None]:
     """Map a measured CPU mean into 0-5 points with gating.
 
     Evaluation order (first match wins):
@@ -262,23 +262,23 @@ def score_cpu(
         3. mean ≤ CPU_FULL_THRESHOLD_PERCENT → 5, None
         4. mean > CPU_ZERO_THRESHOLD_PERCENT  → 0, None
         5. partial band → linear decay anchored at PARTIAL_START / ZERO,
-                          rounded, clamped to [0, 5]
+                          rounded to 2 decimal places, clamped to [0, 5]
     """
     expected = expected_fps if expected_fps is not None else EXPECTED_FPS[CPU_PROFILE]
     fps_gate_reason = f"{CPU_PROFILE}_fps_below_threshold"
     if expected <= 0:
-        return 0, fps_gate_reason
+        return 0.0, fps_gate_reason
     if measured_fps / expected < gate_fps_ratio:
-        return 0, fps_gate_reason
+        return 0.0, fps_gate_reason
     if mean_cpu_percent is None:
-        return 0, "sampler_no_data"
+        return 0.0, "sampler_no_data"
     if mean_cpu_percent <= CPU_FULL_THRESHOLD_PERCENT:
-        return 5, None
+        return 5.0, None
     if mean_cpu_percent > CPU_ZERO_THRESHOLD_PERCENT:
-        return 0, None
+        return 0.0, None
     span = CPU_ZERO_THRESHOLD_PERCENT - CPU_PARTIAL_START_PERCENT
     raw = (CPU_ZERO_THRESHOLD_PERCENT - mean_cpu_percent) / span * 5.0
-    return max(0, min(5, round(raw))), None
+    return max(0.0, min(5.0, round(raw, 2))), None
 
 
 def _thresholds_used(sample_hz: float | None) -> dict:
@@ -306,7 +306,7 @@ def _build_cpu_block(
         5. normal scoring via score_cpu
     """
     block: dict = {
-        "points": 0,
+        "points": 0.0,
         "mean_percent": None,
         "sample_count": 0,
         "sample_window_ms": 0,
@@ -486,7 +486,7 @@ def build_score(
     # _build_cpu_block (decode_path_violation, 2k_round_failed, sampler_no_data,
     # container_mode_unsupported, host_failure) is more informative and wins.
     if not gate_pass and not cpu_block.get("gated"):
-        cpu_block["points"] = 0
+        cpu_block["points"] = 0.0
         cpu_block["gated"] = True
         cpu_block["gate_reason"] = GATE_CPU_REASON
     out["cpu"] = cpu_block
