@@ -148,6 +148,22 @@ def _parse_fields(text: str) -> dict[str, str]:
     return fields
 
 
+def _write_capture_statuses(
+    run_dir: Path,
+    *,
+    two_k: dict | None = None,
+    four_k: dict | None = None,
+) -> None:
+    statuses = {
+        "2k": two_k or {"profile": "2k", "phase": "completed", "detail": {}},
+        "4k": four_k or {"profile": "4k", "phase": "completed", "detail": {}},
+    }
+    for profile, status in statuses.items():
+        status_dir = run_dir / f"{profile}_screenshots"
+        status_dir.mkdir(parents=True, exist_ok=True)
+        (status_dir / "capture_status.json").write_text(json.dumps(status))
+
+
 # ---------------------------------------------------------------------------
 # 1.1 Format (field order, |info| alone, multi-line info, |debug| last, no
 #     explanatory comments from reference/result-sample.info)
@@ -309,6 +325,94 @@ def test_info_omits_execution_feedback_when_absent_or_empty(feedback):
     assert "Execution Feedback:" not in fields["info"]
 
 
+def test_info_always_emits_capture_status_for_successful_profiles(tmp_path):
+    run_dir = tmp_path / "run"
+    _write_capture_statuses(run_dir)
+
+    text = result_info.render(score=_full_score(), runtime_ms=42, run_dir=run_dir)
+    info = _parse_fields(text)["info"]
+
+    assert "Capture Status:" in info
+    assert info.splitlines()[info.splitlines().index("Capture Status:") + 1 :][:2] == [
+        "- 2K: completed",
+        "- 4K: completed",
+    ]
+
+
+def test_info_renders_capture_status_detail_as_deterministic_json(tmp_path):
+    run_dir = tmp_path / "run"
+    _write_capture_statuses(
+        run_dir,
+        four_k={
+            "profile": "4k",
+            "phase": "navigation_timeout",
+            "detail": {
+                "url": "http://127.0.0.1:8080/play",
+                "timeout_s": 120,
+            },
+        },
+    )
+
+    text = result_info.render(score=_full_score(), runtime_ms=42, run_dir=run_dir)
+    info = _parse_fields(text)["info"]
+
+    assert '- 4K: navigation_timeout {"timeout_s": 120, "url": "http://127.0.0.1:8080/play"}' in info
+
+
+def test_info_renders_capture_status_internal_phase_and_detail_unsanitized(tmp_path):
+    run_dir = tmp_path / "run"
+    _write_capture_statuses(
+        run_dir,
+        two_k={
+            "profile": "2k",
+            "phase": "forensics_installed",
+            "detail": {
+                "chromium_version": "Chromium 131.0.6778.85",
+                "selector": "#player",
+                "clip": {"x": 12, "y": 34, "width": 3840, "height": 2160},
+            },
+        },
+    )
+
+    text = result_info.render(score=_full_score(), runtime_ms=42, run_dir=run_dir)
+    info = _parse_fields(text)["info"]
+
+    assert "forensics_installed" in info
+    assert "Chromium 131.0.6778.85" in info
+    assert '"selector": "#player"' in info
+    assert '"clip": {"height": 2160, "width": 3840, "x": 12, "y": 34}' in info
+
+
+def test_info_renders_missing_capture_status_as_not_run(tmp_path):
+    run_dir = tmp_path / "run"
+    _write_capture_statuses(
+        run_dir,
+        two_k={"profile": "2k", "phase": "completed", "detail": {}},
+    )
+    (run_dir / "4k_screenshots" / "capture_status.json").unlink()
+
+    text = result_info.render(score=_full_score(), runtime_ms=42, run_dir=run_dir)
+    info = _parse_fields(text)["info"]
+
+    assert "- 2K: completed" in info
+    assert "- 4K: not run" in info
+
+    text_without_run_dir = result_info.render(score=_full_score(), runtime_ms=42, run_dir=None)
+    info_without_run_dir = _parse_fields(text_without_run_dir)["info"]
+    assert "- 2K: not run" in info_without_run_dir
+    assert "- 4K: not run" in info_without_run_dir
+
+
+def test_capture_status_block_is_inside_info_field(tmp_path):
+    run_dir = tmp_path / "run"
+    _write_capture_statuses(run_dir)
+
+    text = result_info.render(score=_full_score(), runtime_ms=42, run_dir=run_dir)
+
+    assert text.index("Capture Status:") < text.index("|debug|")
+    assert "Capture Status:" in _parse_fields(text)["info"]
+
+
 # ---------------------------------------------------------------------------
 # 1.3 Decode-path violation feedback
 # ---------------------------------------------------------------------------
@@ -354,10 +458,10 @@ def test_info_surfaces_each_decode_path_violation_once():
 
     text = result_info.render(score=score, runtime_ms=42, run_dir="/r")
     info = _parse_fields(text)["info"]
-    violation_lines = [
-        line for line in info.splitlines()
-        if line.startswith("- 2K:") or line.startswith("- 4K:")
-    ]
+    info_lines = info.splitlines()
+    start = info_lines.index("Decode Path Violations:") + 1
+    end = info_lines.index("", start)
+    violation_lines = info_lines[start:end]
 
     assert "Decode Path Violations:" in info
     assert violation_lines == [

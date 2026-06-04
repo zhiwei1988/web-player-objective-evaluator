@@ -7,12 +7,13 @@ The contest platform expects a line-oriented file with fields
 final multi-line organizer-facing field.
 
 `result.info` is a projection of `score.json` (the authoritative score
-artifact) and is intentionally lossy:
+artifact) plus `capture_status.json` read from `run_dir`, and is intentionally
+lossy:
 
 - `info` is contestant-visible: total score, the five scoring item point
   values (2K correctness, 2K FPS, 4K correctness, 4K FPS, CPU), optional
-  decode-path violation summaries, and optional sanitized execution feedback for
-  contestant-side failures.
+  decode-path violation summaries, capture phase/detail, and optional sanitized
+  execution feedback for contestant-side failures.
 - `debug` is organizer-facing: run directory, top-level reason, per-profile
   measured diagnostics, CPU gate diagnostics, and Chromium version.
 
@@ -116,7 +117,35 @@ def _decode_path_violation_lines(score: dict) -> list[str]:
     return lines
 
 
-def _build_info_lines(score: dict) -> list[str]:
+def _capture_status_lines(run_dir: str | Path | None) -> list[str]:
+    lines: list[str] = ["Capture Status:"]
+    base_dir = Path(run_dir) if run_dir is not None else None
+
+    for profile_key, label in _PROFILE_LABELS.items():
+        phase = "not run"
+        detail: dict | None = None
+        if base_dir is not None:
+            status_path = base_dir / f"{profile_key}_screenshots" / "capture_status.json"
+            try:
+                status = json.loads(status_path.read_text())
+            except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+                status = None
+            if isinstance(status, dict):
+                raw_phase = status.get("phase")
+                if raw_phase:
+                    phase = str(raw_phase)
+                raw_detail = status.get("detail")
+                if isinstance(raw_detail, dict) and raw_detail:
+                    detail = raw_detail
+
+        line = f"- {label}: {phase}"
+        if detail:
+            line += " " + json.dumps(detail, ensure_ascii=False, sort_keys=True)
+        lines.append(line)
+    return lines
+
+
+def _build_info_lines(score: dict, run_dir: str | Path | None) -> list[str]:
     objective_total = score.get("objective_total", 0)
     max_score = score.get("max_score", 30)
     lines = [
@@ -182,6 +211,8 @@ def _build_info_lines(score: dict) -> list[str]:
     if feedback_lines:
         lines.extend(["", "Execution Feedback:"])
         lines.extend(f"- {line}" for line in feedback_lines)
+
+    lines.extend(["", *_capture_status_lines(run_dir)])
     return lines
 
 
@@ -247,14 +278,14 @@ def render(
     Args:
         score: contents of `score.json`.
         runtime_ms: evaluator wall-clock runtime in milliseconds.
-        run_dir: path to the per-run directory (debug-only).
+        run_dir: path to the per-run directory.
         result_code: 0 for a trustworthy contestant outcome (including valid
             zero-score outcomes caused by the contestant submission); 1 for
             evaluator/host/infrastructure failures.
 
     The returned string ends with a trailing newline.
     """
-    info_lines = _build_info_lines(score)
+    info_lines = _build_info_lines(score, run_dir)
     debug_lines = _build_debug_lines(score, run_dir)
 
     objective_total = score.get("objective_total", 0)
@@ -283,7 +314,7 @@ def _cli() -> int:
     p.add_argument("--runtime-ms", type=int, required=True,
                    help="Evaluator wall-clock runtime in milliseconds.")
     p.add_argument("--run-dir", type=Path, required=False, default=None,
-                   help="Run directory; used in the debug field.")
+                   help="Run directory; used for capture status and debug.")
     p.add_argument("--output", type=Path, required=True,
                    help="Path to write result.info.")
     p.add_argument("--result-code", type=int, choices=(0, 1), default=None,
