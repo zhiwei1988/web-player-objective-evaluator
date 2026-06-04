@@ -175,10 +175,10 @@ def test_build_score_fps_never_closes_correctness_gate():
         chromium_version="t",
     )
     assert out["gate"]["passed"] is True
-    assert out["2k"]["total"] == 8
+    assert out["2k"]["total"] == 8.5
     assert out["4k"]["total"] == 7.5
     assert out["cpu"]["points"] == 5
-    assert out["objective_total"] == 20.5
+    assert out["objective_total"] == 21
 
 
 def test_build_score_4k_violation_fails_gate_and_scores_zero_for_4k():

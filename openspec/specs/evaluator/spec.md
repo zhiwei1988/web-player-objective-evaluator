@@ -363,9 +363,7 @@ The repository SHALL include a focused benchmark or regression path that measure
 
 **Correctness** (per profile): full 5 when `watermark_recognition_rate >= 0.95` AND `color_check_rate >= 0.95` AND `mean_ssim >= 0.90`; partial 2 when `watermark_recognition_rate >= 0.80` AND `mean_ssim >= 0.75`; otherwise 0. This applies to both 2K and 4K. 4K correctness SHALL remain scored even when 4K FPS is low — EXCEPT when that profile's decode-path verdict is `violation`.
 
-**2K FPS** (threshold based): expected FPS SHALL come from `PROFILES["2k"].fps` and default to `20`. Full 5 when `measured_fps / expected_fps >= FPS_FULL_RATIO_BY_PROFILE["2k"]`; partial 3 at/above `FPS_PARTIAL_RATIO_BY_PROFILE["2k"]`; otherwise 0. Defaults `0.85` / `0.50`. The 2K block SHALL record `fps_full_threshold_used`, `fps_partial_threshold_used`, and `expected_fps`.
-
-**4K FPS** (linear absolute): expected FPS SHALL come from `PROFILES["4k"].fps` and default to `20`. `score.json.4k.fps_points` SHALL equal `round(min(max(measured_fps, 0) / expected_fps, 1.0) * 10, 2)`. The 4K block SHALL record `fps_scoring_mode = "linear_absolute"`, `fps_linear_full_score = 10`, and `expected_fps`.
+**FPS** (linear absolute, both profiles): each profile's expected FPS SHALL come from `PROFILES[profile].fps` and default to `20`. Each profile's per-profile FPS full score SHALL come from `FPS_LINEAR_FULL_SCORE_BY_PROFILE` (`{"2k": 5, "4k": 10}`) as the single source of truth. `score.json.<profile>.fps_points` SHALL equal `round(min(max(measured_fps, 0) / expected_fps, 1.0) * FPS_LINEAR_FULL_SCORE_BY_PROFILE[profile], 2)`. Each profile block SHALL record `fps_scoring_mode = "linear_absolute"`, `fps_linear_full_score` (5 for 2K, 10 for 4K), and `expected_fps`. No profile block SHALL carry `fps_full_threshold_used` or `fps_partial_threshold_used`; threshold-based 2K FPS scoring and the `FPS_FULL_RATIO_BY_PROFILE` / `FPS_PARTIAL_RATIO_BY_PROFILE` tables are removed.
 
 **CPU**: `scorer.score_cpu(...)` SHALL return an integer in `[0, 5]` with a nullable `gate_reason`, computed exactly as before (fps floor → `sampler_no_data` → full/zero/partial bands). The CPU block SHALL record `measured_on_profile = "2k"`, `gate_profile = "2k"`, `expected_fps`, `measured_fps`, `thresholds_used`, `mean_percent`, `sample_count`, and the existing audit fields.
 
@@ -374,7 +372,7 @@ The repository SHALL include a focused benchmark or regression path that measure
 - **When the gate PASSES**, each profile's `total` SHALL equal `correctness_points + fps_points`, the CPU sub-score SHALL be scored normally, and `objective_total` SHALL equal `2k.total + 4k.total + cpu.points` (the full 30-point scheme).
 - **When the gate FAILS**, level-1 SHALL NOT contribute: each profile's `total` SHALL equal its `correctness_points` alone (FPS still computed and recorded under `fps_points`, but excluded from `total`), the CPU block SHALL be set to `points=0, gated=true, gate_reason="gate_failed"` (UNLESS a more specific reason already applies — `decode_path_violation`, `2k_fps_below_threshold`, `sampler_no_data`, `2k_round_failed`, `container_mode_unsupported`, `host_failure` — which is retained), and `objective_total` SHALL equal `2k.correctness_points + 4k.correctness_points`.
 
-`max_score` SHALL remain `30`. Because reaching `30` requires both full correctness (gate pass) and full level-1 performance, decode correctness alone caps the total at `≤ 10` ("level-0 has no full marks"). `objective_total` MAY be fractional (4K FPS is fractional) and SHALL be rounded consistently for display. No profile block SHALL carry `reason = "skipped_gate_failed"` (both profiles are always captured per the Evaluator Entry Script requirement).
+`max_score` SHALL remain `30`. Because reaching `30` requires both full correctness (gate pass) and full level-1 performance, decode correctness alone caps the total at `≤ 10` ("level-0 has no full marks"). `objective_total` MAY be fractional (FPS is fractional for both profiles) and SHALL be rounded consistently for display. No profile block SHALL carry `reason = "skipped_gate_failed"` (both profiles are always captured per the Evaluator Entry Script requirement).
 
 #### Scenario: Per-profile totals and the gate block
 
@@ -411,10 +409,20 @@ The repository SHALL include a focused benchmark or regression path that measure
 - **WHEN** a submission draws a fake canvas overlay that fails DataMatrix, color block, or SSIM checks
 - **THEN** it cannot reach full correctness (5) on that profile, the gate fails, and level-1 is not scored
 
+#### Scenario: 2K FPS is scored linearly out of 5
+
+- **WHEN** the 2K round measures `measured_fps = 10` against `expected_fps = 20`
+- **THEN** `score.json.2k.fps_points = round(min(10 / 20, 1.0) * 5, 2) = 2.5`, the 2K block records `fps_scoring_mode = "linear_absolute"` and `fps_linear_full_score = 5`, and no `fps_full_threshold_used` / `fps_partial_threshold_used` field is present
+
+#### Scenario: FPS at or above expected caps at the profile full score
+
+- **WHEN** a profile measures `measured_fps >= expected_fps`
+- **THEN** that profile's `fps_points` equals its `fps_linear_full_score` exactly (5 for 2K, 10 for 4K), never more
+
 #### Scenario: Missing profile entry fails loudly
 
-- **WHEN** `scorer.score_fps` is invoked with a profile name absent from `FPS_FULL_RATIO_BY_PROFILE` or `FPS_PARTIAL_RATIO_BY_PROFILE`
-- **THEN** `score_fps` raises a clear error (e.g. `KeyError`) rather than silently falling back to a default ratio
+- **WHEN** `scorer.score_fps` is invoked with a profile name absent from `PROFILES`
+- **THEN** `score_fps` raises a clear error (e.g. `KeyError`) rather than silently scoring against a default
 
 ### Requirement: Contestant CPU Usage Measurement
 
@@ -492,12 +500,12 @@ When sampling completes, `runner.py` SHALL write `<screenshots_dir>/capture_meta
 
 ### Requirement: Report Generation
 
-`report.py` SHALL generate an internal-only `report.html` per run, containing: a top summary with `objective_total` and per-profile subtotals (`2k` and `4k`); a gallery of suspicious screenshots (watermark recognition failures, color block failures, samples with SSIM `< 0.7`); a frame-number-over-time chart for each profile; an SSIM histogram for each profile; capture-throughput diagnostics for each profile; CPU scoring details identifying that CPU was measured on the 2K profile; the 4K linear absolute FPS formula and applied expected FPS; and relative-path links to the raw artifacts. The report MUST NOT be exposed to contestants by default.
+`report.py` SHALL generate an internal-only `report.html` per run, containing: a top summary with `objective_total` and per-profile subtotals (`2k` and `4k`); a gallery of suspicious screenshots (watermark recognition failures, color block failures, samples with SSIM `< 0.7`); a frame-number-over-time chart for each profile; an SSIM histogram for each profile; capture-throughput diagnostics for each profile; CPU scoring details identifying that CPU was measured on the 2K profile; the 2K and 4K linear absolute FPS formulas and applied expected FPS; and relative-path links to the raw artifacts. The report MUST NOT be exposed to contestants by default.
 
 #### Scenario: Report includes audit evidence
 
 - **WHEN** scoring completes
-- **THEN** `report.html` opens in a browser, renders all charts and galleries from local files only (no network calls), shows capture sampling FPS and capture overrun diagnostics for each completed profile, shows CPU measured on profile `2k`, shows the 4K linear FPS formula, and links to `2k_screenshots/`, `4k_screenshots/`, both metrics JSONs, and `score.json`
+- **THEN** `report.html` opens in a browser, renders all charts and galleries from local files only (no network calls), shows capture sampling FPS and capture overrun diagnostics for each completed profile, shows CPU measured on profile `2k`, shows the 2K and 4K linear FPS formulas, and links to `2k_screenshots/`, `4k_screenshots/`, both metrics JSONs, and `score.json`
 
 #### Scenario: Empty failure gallery
 
@@ -556,9 +564,9 @@ For every evaluator invocation that creates a run directory and produces `score.
 Objective Score: 23.5 / 30
 Breakdown:
 - 2K Correctness: 5 / 5
-- 2K FPS: 5 / 5
+- 2K FPS: 5.00 / 5
 - 4K Correctness: 5 / 5
-- 4K FPS: 3.0 / 10
+- 4K FPS: 3.00 / 10
 - CPU: 3.00 / 5
 
 Runtime Metrics:
@@ -572,7 +580,7 @@ Capture Status:
 |debug|...
 ```
 
-`score` SHALL equal `score.json.objective_total` formatted without unnecessary trailing zeroes. `runtime` SHALL be the evaluator wall-clock runtime in milliseconds for the current invocation. `info` SHALL be contestant-visible and SHALL contain the total objective score and the five scoring item point values (2K correctness, 2K FPS, 4K correctness, 4K FPS, and CPU). The `info` block SHALL also contain a per-profile `Capture Status:` section that is always present, listing one line per profile (`2K` and `4K`) with that profile's terminal capture `phase` and its verbatim `detail` when present. The `info` block MAY contain a `Runtime Metrics:` section exposing measured FPS and CPU mean percent when those values are available, and, when available for contestant-side execution failures, a concise sanitized `Execution Feedback:` section. The CPU item score SHALL be formatted with exactly two digits after the decimal point. `debug` SHALL be organizer-facing and MAY contain multi-line diagnostics such as run directory, failure reason, per-profile metrics, CPU gate details, and Chromium version.
+`score` SHALL equal `score.json.objective_total` formatted without unnecessary trailing zeroes. `runtime` SHALL be the evaluator wall-clock runtime in milliseconds for the current invocation. `info` SHALL be contestant-visible and SHALL contain the total objective score and the five scoring item point values (2K correctness, 2K FPS, 4K correctness, 4K FPS, and CPU). The `info` block SHALL also contain a per-profile `Capture Status:` section that is always present, listing one line per profile (`2K` and `4K`) with that profile's terminal capture `phase` and its verbatim `detail` when present. The `info` block MAY contain a `Runtime Metrics:` section exposing measured FPS and CPU mean percent when those values are available, and, when available for contestant-side execution failures, a concise sanitized `Execution Feedback:` section. The 2K FPS, 4K FPS, and CPU item scores SHALL each be formatted with exactly two digits after the decimal point; the correctness item scores SHALL be formatted as integers. `debug` SHALL be organizer-facing and MAY contain multi-line diagnostics such as run directory, failure reason, per-profile metrics, CPU gate details, and Chromium version.
 
 `result` SHALL be `0` when the evaluator produced a valid contestant result, including valid zero-score outcomes caused by the contestant submission. `result` SHALL be `1` when an evaluator, host, infrastructure, or publication failure makes the score untrustworthy.
 
@@ -585,6 +593,7 @@ The authorized `Capture Status:` and `Runtime Metrics:` sections are exempt from
 - **THEN** `/uploads/result.info` exists with identical contents
 - **THEN** the `result.info` `score` field equals `score.json.objective_total`
 - **THEN** the `info` block lists 2K correctness, 2K FPS, 4K correctness, 4K FPS, and CPU item scores
+- **THEN** the 2K FPS, 4K FPS, and CPU items are each formatted with exactly two digits after the decimal point
 - **THEN** the `info` block contains a `Capture Status:` section listing both `2K` and `4K`, each showing phase `completed`
 - **THEN** the `info` block does not contain an `Execution Feedback:` section unless contestant-side execution feedback was recorded
 
@@ -594,7 +603,7 @@ The authorized `Capture Status:` and `Runtime Metrics:` sections are exempt from
 - **THEN** `result.info` exists in the run directory and in `dirname <submission_zip>`
 - **THEN** `|result|0` is written
 - **THEN** `|score|0` is written
-- **THEN** the `info` block shows `Objective Score: 0 / 30`, the CPU item as `0.00 / 5`, and the remaining scoring items as `0 / <max>`
+- **THEN** the `info` block shows `Objective Score: 0 / 30`, the 2K FPS item as `0.00 / 5`, the 4K FPS item as `0.00 / 10`, the CPU item as `0.00 / 5`, and the correctness items as `0 / 5`
 - **THEN** the `info` block includes an `Execution Feedback:` section when sanitized contestant feedback is available
 - **THEN** the internal raw failure reason appears in `debug`
 
@@ -663,7 +672,7 @@ The evaluator SHALL detect or neutralize the cheating strategies listed below, a
 #### Scenario: I-frame-only or repeated-frame playback
 
 - **WHEN** a contestant only displays I-frames or repeats a small set of frames
-- **THEN** `unique_frame_count` and `measured_fps` reflect the reduction, scoring partial or zero FPS points according to the 2K threshold policy and the 4K linear FPS policy
+- **THEN** `unique_frame_count` and `measured_fps` reflect the reduction, scoring reduced or zero FPS points according to the shared 2K/4K linear FPS policy
 
 #### Scenario: Fake canvas overlay
 

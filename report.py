@@ -144,6 +144,12 @@ def _fmt_metric(value, suffix: str = "") -> str:
     return "—"
 
 
+def _fmt_score(value) -> str:
+    if isinstance(value, (int, float)):
+        return f"{value:g}"
+    return "0"
+
+
 def _capture_diagnostics_table(metrics: dict | None) -> str:
     metrics = metrics or {}
     rows = [
@@ -312,21 +318,12 @@ def render_report(
         ssim_scores = (metrics or {}).get("ssim_scores", [])
         frame_numbers = (metrics or {}).get("frame_numbers", [])
         expected_fps = profile_score["expected_fps"]
-        full_ratio = profile_score.get("fps_full_threshold_used")
-        partial_ratio = profile_score.get("fps_partial_threshold_used")
         fps_mode = profile_score.get("fps_scoring_mode")
         if fps_mode == "linear_absolute":
             full_score = profile_score.get("fps_linear_full_score", 5)
             fps_band_row = (
                 f"<tr><th>fps formula</th><td>"
                 f"linear absolute: min(measured_fps / {expected_fps:g}, 1) × {full_score}"
-                f"</td></tr>"
-            )
-        elif isinstance(full_ratio, (int, float)) and isinstance(partial_ratio, (int, float)):
-            fps_band_row = (
-                f"<tr><th>fps band</th><td>"
-                f"full ≥ {full_ratio:.2f} ({expected_fps * full_ratio:.2f} fps), "
-                f"partial ≥ {partial_ratio:.2f} ({expected_fps * partial_ratio:.2f} fps)"
                 f"</td></tr>"
             )
         else:
@@ -346,6 +343,8 @@ def render_report(
         else:
             decode_path_row = ""
         fps_full_score = profile_score.get("fps_linear_full_score", 5)
+        fps_points = _fmt_score(profile_score["fps_points"])
+        fps_full_score_text = _fmt_score(fps_full_score)
         fps_not_scored = (
             " (not scored: level-0 gate failed)"
             if gate and not gate.get("passed", True)
@@ -357,7 +356,7 @@ def render_report(
   <table>
     {decode_path_row}
     <tr><th>correctness</th><td>{profile_score["correctness_points"]}/5</td></tr>
-    <tr><th>fps</th><td>{profile_score["fps_points"]}/{fps_full_score}{fps_not_scored}</td></tr>
+    <tr><th>fps</th><td>{fps_points}/{fps_full_score_text}{fps_not_scored}</td></tr>
     <tr><th>measured fps</th><td>{profile_score["measured_fps"]:.2f} (expected {expected_fps})</td></tr>
     {fps_band_row}
     <tr><th>watermark rate</th><td>{profile_score["watermark_recognition_rate"]:.3f}</td></tr>

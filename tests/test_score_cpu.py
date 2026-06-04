@@ -87,8 +87,8 @@ def test_score_cpu_default_gate_passes_just_above_065():
 
 
 def test_score_cpu_default_gate_trips_when_only_partial_fps_credit():
-    # 2K ratio 0.50 earns partial FPS credit (3 pts) but is still below the
-    # 0.65 CPU gate — CPU must be gated to 0 regardless of measured CPU.
+    # 2K ratio 0.50 earns partial linear FPS credit but is still below the
+    # 0.65 CPU gate, so CPU must be gated to 0 regardless of measured CPU.
     points, reason = scorer.score_cpu(
         mean_cpu_percent=0.0,
         measured_fps=fps_at(0.50),

@@ -29,14 +29,14 @@ from pathlib import Path
 from typing import Any
 
 
-# (label, profile_key, points_key, max_points). profile_key=None marks the
-# CPU sub-score, which lives under score["cpu"]["points"].
-_SCORE_ITEMS: tuple[tuple[str, str | None, str | None, int], ...] = (
-    ("2K Correctness", "2k", "correctness_points", 5),
-    ("2K FPS",         "2k", "fps_points",         5),
-    ("4K Correctness", "4k", "correctness_points", 5),
-    ("4K FPS",         "4k", "fps_points",         10),
-    ("CPU",            None, None,                 5),
+# (label, profile_key, points_key, max_points, fixed2). profile_key=None marks
+# the CPU sub-score, which lives under score["cpu"]["points"].
+_SCORE_ITEMS: tuple[tuple[str, str | None, str | None, int, bool], ...] = (
+    ("2K Correctness", "2k", "correctness_points", 5, False),
+    ("2K FPS",         "2k", "fps_points",         5, True),
+    ("4K Correctness", "4k", "correctness_points", 5, False),
+    ("4K FPS",         "4k", "fps_points",         10, True),
+    ("CPU",            None, None,                 5, True),
 )
 
 
@@ -152,7 +152,7 @@ def _build_info_lines(score: dict, run_dir: str | Path | None) -> list[str]:
         f"Objective Score: {_fmt_num(objective_total)} / {_fmt_num(max_score)}",
         "Breakdown:",
     ]
-    for label, profile_key, points_key, max_pts in _SCORE_ITEMS:
+    for label, profile_key, points_key, max_pts, fixed2 in _SCORE_ITEMS:
         if profile_key is None:
             pts = (score.get("cpu") or {}).get("points")
         else:
@@ -160,7 +160,7 @@ def _build_info_lines(score: dict, run_dir: str | Path | None) -> list[str]:
             pts = block.get(points_key)
         if pts is None:
             pts = 0
-        pts_text = _fmt_fixed2(pts) if profile_key is None else _fmt_num(pts)
+        pts_text = _fmt_fixed2(pts) if fixed2 else _fmt_num(pts)
         lines.append(f"- {label}: {pts_text} / {_fmt_num(max_pts)}")
 
     info_metrics: list[str] = []

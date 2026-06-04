@@ -1,9 +1,7 @@
 """Score the analyzer's metrics into the final 30-point objective total.
 
 2K: 5 correctness + 5 FPS, 4K: 5 correctness + 10 FPS, plus a
-0–5 CPU sub-score sampled during the 2K profile capture window. Thresholds
-are duplicated from openspec/specs/evaluator/spec.md and design.md; bumping
-one without bumping the others is a regression.
+0–5 CPU sub-score sampled during the 2K profile capture window.
 """
 
 from __future__ import annotations
@@ -29,44 +27,9 @@ GATE_CPU_REASON = "gate_failed"
 """cpu `gate_reason` when the CPU sub-score is voided by a failed level-0 gate."""
 
 
-# FPS scoring tunables. Per-profile so 2K (easier) can be held to a stricter
-# bar than 4K. See openspec/specs/evaluator/spec.md — Scoring requirement.
-FPS_FULL_RATIO_BY_PROFILE: dict[str, float] = {"2k": 0.85}
-"""measured_fps / expected_fps at or above this → full 5 FPS points."""
-
-FPS_PARTIAL_RATIO_BY_PROFILE: dict[str, float] = {"2k": 0.50}
-"""measured_fps / expected_fps at or above this (but below the full ratio)
-→ partial 3 FPS points. Below this → 0 FPS points."""
-
-
-def _validate_fps_thresholds() -> None:
-    """Enforce at import time: every profile has both thresholds and partial < full.
-
-    Using a raise (not assert) so this still fires under `python -O`. Adding a
-    new profile in lib/profiles.PROFILES MUST also add entries to both dicts —
-    no silent fallback ratio.
-    """
-    threshold_profiles = {"2k"}
-    missing_full = threshold_profiles - set(FPS_FULL_RATIO_BY_PROFILE)
-    missing_partial = threshold_profiles - set(FPS_PARTIAL_RATIO_BY_PROFILE)
-    if missing_full or missing_partial:
-        raise RuntimeError(
-            f"FPS scoring dicts incomplete: missing from FPS_FULL_RATIO_BY_PROFILE={sorted(missing_full)}, "
-            f"missing from FPS_PARTIAL_RATIO_BY_PROFILE={sorted(missing_partial)}"
-        )
-    unknown = (set(FPS_FULL_RATIO_BY_PROFILE) | set(FPS_PARTIAL_RATIO_BY_PROFILE)) - set(PROFILES)
-    if unknown:
-        raise RuntimeError(f"FPS scoring dicts name unknown profiles: {sorted(unknown)}")
-    for p in threshold_profiles:
-        full = FPS_FULL_RATIO_BY_PROFILE[p]
-        partial = FPS_PARTIAL_RATIO_BY_PROFILE[p]
-        if partial >= full:
-            raise RuntimeError(
-                f"FPS_PARTIAL_RATIO_BY_PROFILE[{p!r}]={partial} must be < FPS_FULL_RATIO_BY_PROFILE[{p!r}]={full}"
-            )
-
-
-_validate_fps_thresholds()
+# FPS scoring full score per profile. This is the single source of truth for
+# the linear FPS points awarded by each profile.
+FPS_LINEAR_FULL_SCORE_BY_PROFILE: dict[str, float] = {"2k": 5, "4k": 10}
 
 
 # CPU sub-score tunables. Module-level so calibration is a one-line change.
@@ -151,8 +114,6 @@ class ProfileScore:
     watermark_recognition_rate: float
     color_check_rate: float
     mean_ssim: float
-    fps_full_threshold_used: float
-    fps_partial_threshold_used: float
 
     @property
     def total(self) -> float:
@@ -168,15 +129,9 @@ class ProfileScore:
             "watermark_recognition_rate": self.watermark_recognition_rate,
             "color_check_rate": self.color_check_rate,
             "mean_ssim": self.mean_ssim,
+            "fps_scoring_mode": "linear_absolute",
+            "fps_linear_full_score": FPS_LINEAR_FULL_SCORE_BY_PROFILE[self.profile],
         }
-        if self.profile in FPS_FULL_RATIO_BY_PROFILE:
-            out["fps_full_threshold_used"] = self.fps_full_threshold_used
-            out["fps_partial_threshold_used"] = self.fps_partial_threshold_used
-        if self.profile == "4k":
-            out["fps_scoring_mode"] = "linear_absolute"
-            out["fps_linear_full_score"] = 10
-            out["fps_full_threshold_used"] = None
-            out["fps_partial_threshold_used"] = None
         return out
 
 
@@ -195,30 +150,13 @@ def score_correctness(rate_wm: float, rate_color: float, mean_ssim: float) -> in
 
 
 def score_fps(measured: float, expected: float, profile: str) -> float:
-    """Score the unique-frame FPS metric, with per-profile thresholds.
-
-    The full-credit and partial-credit ratios are looked up from
-    FPS_FULL_RATIO_BY_PROFILE / FPS_PARTIAL_RATIO_BY_PROFILE — an unknown
-    profile raises KeyError (no silent fallback).
-
-    Full (5): measured / expected ≥ FPS_FULL_RATIO_BY_PROFILE[profile].
-    Partial (3): measured / expected ≥ FPS_PARTIAL_RATIO_BY_PROFILE[profile].
-    Zero (0): below the partial ratio.
-    """
+    """Score unique-frame FPS linearly against the profile's expected FPS."""
     if profile not in PROFILES:
         raise KeyError(profile)
     if expected <= 0:
         return 0.0
-    if profile == "4k":
-        return round(min(max(measured, 0.0) / expected, 1.0) * 10.0, 2)
-    full_ratio = FPS_FULL_RATIO_BY_PROFILE[profile]
-    partial_ratio = FPS_PARTIAL_RATIO_BY_PROFILE[profile]
-    ratio = measured / expected
-    if ratio >= full_ratio:
-        return 5
-    if ratio >= partial_ratio:
-        return 3
-    return 0
+    full_score = FPS_LINEAR_FULL_SCORE_BY_PROFILE[profile]
+    return round(min(max(measured, 0.0) / expected, 1.0) * full_score, 2)
 
 
 def _gate_correctness_points(metrics: dict | None) -> int:
@@ -377,8 +315,6 @@ def score_profile(profile: str, metrics: dict) -> ProfileScore:
         watermark_recognition_rate=rate_wm,
         color_check_rate=rate_color,
         mean_ssim=mean_ssim,
-        fps_full_threshold_used=FPS_FULL_RATIO_BY_PROFILE.get(profile, 0.0),
-        fps_partial_threshold_used=FPS_PARTIAL_RATIO_BY_PROFILE.get(profile, 0.0),
     )
 
 

@@ -27,18 +27,18 @@ ROOT = Path(__file__).resolve().parents[1]
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _full_2k_block() -> dict:
+def _full_2k_block(fps_points: float = 5) -> dict:
     return {
         "correctness_points": 5,
-        "fps_points": 5,
-        "total": 10,
+        "fps_points": fps_points,
+        "total": 5 + fps_points,
         "measured_fps": 20.0,
         "expected_fps": 20.0,
         "watermark_recognition_rate": 1.0,
         "color_check_rate": 1.0,
         "mean_ssim": 0.95,
-        "fps_full_threshold_used": 0.85,
-        "fps_partial_threshold_used": 0.5,
+        "fps_scoring_mode": "linear_absolute",
+        "fps_linear_full_score": 5,
     }
 
 
@@ -54,8 +54,6 @@ def _full_4k_block(fps_points: float = 5) -> dict:
         "mean_ssim": 0.93,
         "fps_scoring_mode": "linear_absolute",
         "fps_linear_full_score": 10,
-        "fps_full_threshold_used": None,
-        "fps_partial_threshold_used": None,
     }
 
 
@@ -87,6 +85,7 @@ def _cpu_block(points: int = 10, gate_reason: str | None = None) -> dict:
 def _full_score(
     *,
     objective_total: float = 30,
+    two_k_fps_points: float = 5,
     four_k_fps_points: float = 5,
     cpu_points: int = 10,
     chromium_version: str = "Chromium 131.0.6778.85",
@@ -96,7 +95,7 @@ def _full_score(
         "objective_total": objective_total,
         "cpu": _cpu_block(points=cpu_points),
         "chromium_version": chromium_version,
-        "2k": _full_2k_block(),
+        "2k": _full_2k_block(fps_points=two_k_fps_points),
         "4k": _full_4k_block(fps_points=four_k_fps_points),
     }
 
@@ -229,17 +228,22 @@ def test_format_ends_with_newline():
 # ---------------------------------------------------------------------------
 
 def test_info_lists_all_five_scoring_items_normal_run():
-    score = _full_score(four_k_fps_points=1.5, objective_total=19.5, cpu_points=3)
+    score = _full_score(
+        two_k_fps_points=4.25,
+        four_k_fps_points=3.0,
+        objective_total=19.25,
+        cpu_points=3,
+    )
     text = result_info.render(score=score, runtime_ms=42, run_dir="/r")
     fields = _parse_fields(text)
     info = fields["info"]
 
-    assert "Objective Score: 19.5 / 30" in info
+    assert "Objective Score: 19.25 / 30" in info
     assert "Breakdown:" in info
     assert "- 2K Correctness: 5 / 5" in info
-    assert "- 2K FPS: 5 / 5" in info
+    assert "- 2K FPS: 4.25 / 5" in info
     assert "- 4K Correctness: 5 / 5" in info
-    assert "- 4K FPS: 1.5 / 10" in info
+    assert "- 4K FPS: 3.00 / 10" in info
     assert "- CPU: 3.00 / 5" in info
 
 
@@ -580,9 +584,9 @@ def test_contestant_failure_renders_zero_items_and_keeps_result_zero():
     info = fields["info"]
     assert "Objective Score: 0 / 30" in info
     assert "- 2K Correctness: 0 / 5" in info
-    assert "- 2K FPS: 0 / 5" in info
+    assert "- 2K FPS: 0.00 / 5" in info
     assert "- 4K Correctness: 0 / 5" in info
-    assert "- 4K FPS: 0 / 10" in info
+    assert "- 4K FPS: 0.00 / 10" in info
     assert "- CPU: 0.00 / 5" in info
 
 
