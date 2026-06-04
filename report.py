@@ -392,9 +392,9 @@ def render_report(
             if gated else '<span class="ok">scored</span>'
         )
         cpu_heading = (
-            "not scored (0/5)"
+            "not scored (0.00/5)"
             if gate_reason == "gate_failed"
-            else f'{cpu.get("points", 0)}/5'
+            else f'{_fmt_metric(cpu.get("points", 0))}/5'
         )
         # When the gate trips on sampled-profile FPS, surface the exact ratio
         # and cutoff so the contestant understands what throughput would have
@@ -496,7 +496,7 @@ def render_report(
         else (" (gated)" if cpu.get("gated") else "")
     )
     summary_rows.append(
-        f'<tr><th>CPU subtotal</th><td>{cpu.get("points", 0)}/5{cpu_summary_state}</td></tr>'
+        f'<tr><th>CPU subtotal</th><td>{_fmt_metric(cpu.get("points", 0))}/5{cpu_summary_state}</td></tr>'
     )
     summary_rows.append(
         f'<tr><th>top-level reason</th><td>{html.escape(score.get("reason") or "")}</td></tr>'
