@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Host-side automated scorer for the 30-point objective portion of the web plugin-free real-time media player challenge. Drives a known-good RTSP stream into each contestant submission, captures playback through Playwright Chromium, recognizes watermarked reference frames (DataMatrix + color blocks + SSIM), and produces a deterministic `score.json` plus internal `report.html` per run that organizers can defend against appeals. The score breakdown is 10 points for 2K (5 correctness + 5 FPS), 15 points for 4K (5 correctness + 10 FPS), plus a 5-point CPU sub-score derived from the contestant process tree's CPU usage sampled during the 4K capture round. Internal use only.
+Host-side automated scorer for the 35-point objective portion of the web plugin-free real-time media player challenge. Drives a known-good RTSP stream into each contestant submission, captures playback through Playwright Chromium, recognizes watermarked reference frames (DataMatrix + color blocks + SSIM), and produces a deterministic `score.json` plus internal `report.html` per run that organizers can defend against appeals. The score breakdown is 10 points for 2K (5 correctness + 5 FPS), 15 points for 4K (5 correctness + 10 FPS), plus a 10-point CPU sub-score derived from the contestant process tree's CPU usage sampled during the 4K capture round. Internal use only.
 ## Requirements
 ### Requirement: Workspace Layout
 
@@ -127,7 +127,7 @@ Exit codes: `0` on a normal scoring run (regardless of contestant score), `2` wh
 #### Scenario: Successful end-to-end run
 
 - **WHEN** an organizer runs `scripts/evaluator.sh team_ref /uploads/team_ref/reference.zip` on a build-and-deploy-ready host with port `8080` free and a contestant zip that satisfies the contestant runtime contract
-- **THEN** the script exits `0`, `results/team_ref_<ts>/score.json` exists and contains a valid `objective_total` with `max_score=30` and per-profile `2k` / `4k` / `cpu` blocks, port `8080` is free after the run, and the contents of `score.json` were printed to stdout
+- **THEN** the script exits `0`, `results/team_ref_<ts>/score.json` exists and contains a valid `objective_total` with `max_score=35` and per-profile `2k` / `4k` / `cpu` blocks, port `8080` is free after the run, and the contents of `score.json` were printed to stdout
 - **THEN** the contestant `start.sh` was invoked from `/uploads/team_ref/`
 
 #### Scenario: Concurrent invocation refused
@@ -180,7 +180,7 @@ When `scripts/evaluator.sh` polls the contestant readiness URL and the contestan
 #### Scenario: Frontend never becomes ready writes failure score
 
 - **WHEN** the contestant `start.sh` runs but `http://127.0.0.1:8080/play?profile=2k&autoplay=1` is unreachable for 60 seconds
-- **THEN** `scripts/evaluator.sh` exits `2`, `results/<team_id>_<ts>/score.json` exists with `objective_total = 0`, `max_score = 30`, and `reason = "contestant_frontend_unavailable"`, `report.html` exists with the same schema as a normal run, and ports `8080` / `554` are free after cleanup
+- **THEN** `scripts/evaluator.sh` exits `2`, `results/<team_id>_<ts>/score.json` exists with `objective_total = 0`, `max_score = 35`, and `reason = "contestant_frontend_unavailable"`, `report.html` exists with the same schema as a normal run, and ports `8080` / `554` are free after cleanup
 
 #### Scenario: Missing start.sh writes failure score
 
@@ -252,7 +252,7 @@ Contestant-facing feedback for this failure SHALL be bounded and explicit, inclu
 #### Scenario: Memory limit breach writes failure score
 
 - **WHEN** contestant code exceeds the effective memory limit before or during evaluation
-- **THEN** `score.json` exists with `objective_total = 0`, `max_score = 30`, and `reason = "contestant_memory_limit_exceeded"`
+- **THEN** `score.json` exists with `objective_total = 0`, `max_score = 35`, and `reason = "contestant_memory_limit_exceeded"`
 - **THEN** `score.json.contestant_feedback` includes a bounded message naming the effective memory limit
 - **THEN** `report.html` and `result.info` are produced from the same score path
 
@@ -440,7 +440,7 @@ The repository SHALL include a focused benchmark or regression path that measure
 
 ### Requirement: Scoring
 
-`scorer.py` SHALL accept one or more `--metrics PROFILE=PATH` arguments (one per profile, e.g. `--metrics 2k=results/.../2k_metrics.json --metrics 4k=results/.../4k_metrics.json`), `--output`, and `--report`; score 2K for up to 10 points (5 correctness + 5 FPS), score 4K for up to 15 points (5 correctness + 10 FPS), compute an additional 0-5 point CPU sub-score based on contestant CPU usage measured during the **CPU-sampled profile** round (see the Contestant CPU Usage Measurement requirement); and produce a `score.json` containing one block per profile (keys `2k`, `4k`), a top-level `cpu` block, a top-level `gate` block, `objective_total`, and `max_score` of `30`.
+`scorer.py` SHALL accept one or more `--metrics PROFILE=PATH` arguments (one per profile, e.g. `--metrics 2k=results/.../2k_metrics.json --metrics 4k=results/.../4k_metrics.json`), `--output`, and `--report`; score 2K for up to 10 points (5 correctness + 5 FPS), score 4K for up to 15 points (5 correctness + 10 FPS), compute an additional 0-10 point CPU sub-score based on contestant CPU usage measured during the **CPU-sampled profile** round (see the Contestant CPU Usage Measurement requirement); and produce a `score.json` containing one block per profile (keys `2k`, `4k`), a top-level `cpu` block, a top-level `gate` block, `objective_total`, and `max_score` of `35`.
 
 **Decode-path gate** (first, per profile, UNCHANGED): when the profile's `metrics.decode_forensics.verdict == "violation"`, that profile's `correctness_points` AND `fps_points` SHALL both be `0` regardless of measured rates or FPS, and the profile block SHALL include a `decode_path` sub-block (`verdict`, `checks`, `evidence`). When the violating profile is the CPU-sampled profile (`4k` by default), the CPU block SHALL additionally be set to `points=0, gated=true, gate_reason="decode_path_violation"`. A verdict of `ok`, `inconclusive`, or an absent `decode_forensics` block SHALL NOT affect scoring (fail-open); an `inconclusive` verdict on any profile SHALL set top-level `score.json.review_required = true`.
 
@@ -448,24 +448,24 @@ The repository SHALL include a focused benchmark or regression path that measure
 
 **FPS** (linear absolute, both profiles): each profile's expected FPS SHALL come from `PROFILES[profile].fps` and default to `20`. Each profile's per-profile FPS full score SHALL come from `FPS_LINEAR_FULL_SCORE_BY_PROFILE` (`{"2k": 5, "4k": 10}`) as the single source of truth. `score.json.<profile>.fps_points` SHALL equal `round(min(max(measured_fps, 0) / expected_fps, 1.0) * FPS_LINEAR_FULL_SCORE_BY_PROFILE[profile], 2)`. Each profile block SHALL record `fps_scoring_mode = "linear_absolute"`, `fps_linear_full_score` (5 for 2K, 10 for 4K), and `expected_fps`. No profile block SHALL carry `fps_full_threshold_used` or `fps_partial_threshold_used`; threshold-based 2K FPS scoring and the `FPS_FULL_RATIO_BY_PROFILE` / `FPS_PARTIAL_RATIO_BY_PROFILE` tables are removed.
 
-**CPU**: `scorer.score_cpu(...)` SHALL return a value in `[0, 5]` with a nullable `gate_reason`. The CPU sub-score SHALL be measured on the profile whose `ProfileSpec.cpu_sampled` flag is true (`4k` by default), and `scorer.CPU_PROFILE` SHALL be derived from that flag rather than hard-coded. Evaluation order (first match wins): (1) when `measured_fps / expected_fps < CPU_GATE_FPS_RATIO` on the CPU-sampled profile → `(0, "<profile>_fps_below_threshold")`; (2) when `mean_cpu_percent` is missing → `(0, "sampler_no_data")`; (3) when `mean_cpu_percent <= CPU_FULL_THRESHOLD_PERCENT` → `(5, None)`; (4) when `mean_cpu_percent > CPU_ZERO_THRESHOLD_PERCENT` → `(0, None)`; (5) otherwise linear partial credit `round((CPU_ZERO_THRESHOLD_PERCENT - mean_cpu_percent) / (CPU_ZERO_THRESHOLD_PERCENT - CPU_PARTIAL_START_PERCENT) * 5, 2)` clamped to `[0, 5]`. Calibrated defaults for 4K@16 Mbps on the canonical 16-core host: `CPU_GATE_FPS_RATIO = 0.8`, `CPU_FULL_THRESHOLD_PERCENT = 12.0`, `CPU_PARTIAL_START_PERCENT = 13.0`, `CPU_ZERO_THRESHOLD_PERCENT = 34.0`. These SHALL remain module-level constants in `scorer.py` and the values applied to each run SHALL be echoed into `score.json.cpu.thresholds_used`. The CPU block SHALL record `measured_on_profile` and `gate_profile` equal to the CPU-sampled profile name (`4k` by default), `expected_fps`, `measured_fps`, `thresholds_used`, `mean_percent`, `sample_count`, and the existing audit fields.
+**CPU**: `scorer.score_cpu(...)` SHALL return a value in `[0, 10]` with a nullable `gate_reason`. The CPU sub-score SHALL be measured on the profile whose `ProfileSpec.cpu_sampled` flag is true (`4k` by default), and `scorer.CPU_PROFILE` SHALL be derived from that flag rather than hard-coded. Evaluation order (first match wins): (1) when `measured_fps / expected_fps < CPU_GATE_FPS_RATIO` on the CPU-sampled profile → `(0, "<profile>_fps_below_threshold")`; (2) when `mean_cpu_percent` is missing → `(0, "sampler_no_data")`; (3) when `mean_cpu_percent <= CPU_FULL_THRESHOLD_PERCENT` → `(CPU_LINEAR_FULL_SCORE, None)`; (4) when `mean_cpu_percent > CPU_ZERO_THRESHOLD_PERCENT` → `(0, None)`; (5) otherwise linear partial credit `round((CPU_ZERO_THRESHOLD_PERCENT - mean_cpu_percent) / (CPU_ZERO_THRESHOLD_PERCENT - CPU_PARTIAL_START_PERCENT) * CPU_LINEAR_FULL_SCORE, 2)` clamped to `[0, CPU_LINEAR_FULL_SCORE]`. Calibrated defaults for 4K@16 Mbps on the canonical 16-core host: `CPU_LINEAR_FULL_SCORE = 10.0`, `CPU_GATE_FPS_RATIO = 0.8`, `CPU_FULL_THRESHOLD_PERCENT = 12.0`, `CPU_PARTIAL_START_PERCENT = 13.0`, `CPU_ZERO_THRESHOLD_PERCENT = 34.0`. These SHALL remain module-level constants in `scorer.py` and the values applied to each run SHALL be echoed into `score.json.cpu.thresholds_used` (including `linear_full_score`). The CPU block SHALL record `measured_on_profile` and `gate_profile` equal to the CPU-sampled profile name (`4k` by default), `expected_fps`, `measured_fps`, `thresholds_used`, `mean_percent`, `sample_count`, and the existing audit fields.
 
 **Level-0 gate conditions the total** (see the Level-0 Gate (Decode Correctness) requirement). The gate passes iff `2k.correctness_points == 5` AND `4k.correctness_points == 5`.
 
-- **When the gate PASSES**, each profile's `total` SHALL equal `correctness_points + fps_points`, the CPU sub-score SHALL be scored normally, and `objective_total` SHALL equal `2k.total + 4k.total + cpu.points` (the full 30-point scheme).
+- **When the gate PASSES**, each profile's `total` SHALL equal `correctness_points + fps_points`, the CPU sub-score SHALL be scored normally, and `objective_total` SHALL equal `2k.total + 4k.total + cpu.points` (the full 35-point scheme).
 - **When the gate FAILS**, level-1 SHALL NOT contribute: each profile's `total` SHALL equal its `correctness_points` alone (FPS still computed and recorded under `fps_points`, but excluded from `total`), the CPU block SHALL be set to `points=0, gated=true, gate_reason="gate_failed"` (UNLESS a more specific reason already applies — `decode_path_violation`, `4k_fps_below_threshold`, `sampler_no_data`, `4k_round_failed`, `container_mode_unsupported`, `host_failure` — which is retained), and `objective_total` SHALL equal `2k.correctness_points + 4k.correctness_points`.
 
-`max_score` SHALL remain `30`. Because reaching `30` requires both full correctness (gate pass) and full level-1 performance, decode correctness alone caps the total at `≤ 10` ("level-0 has no full marks"). `objective_total` MAY be fractional (FPS is fractional for both profiles) and SHALL be rounded consistently for display. No profile block SHALL carry `reason = "skipped_gate_failed"` (both profiles are always captured per the Evaluator Entry Script requirement).
+`max_score` SHALL remain `35`. Because reaching `35` requires both full correctness (gate pass) and full level-1 performance, decode correctness alone caps the total at `≤ 10` ("level-0 has no full marks"). `objective_total` MAY be fractional (FPS is fractional for both profiles) and SHALL be rounded consistently for display. No profile block SHALL carry `reason = "skipped_gate_failed"` (both profiles are always captured per the Evaluator Entry Script requirement).
 
 #### Scenario: Per-profile totals and the gate block
 
 - **WHEN** scoring completes for a submission
-- **THEN** `score.json` includes a `2k` block, a `4k` block, a top-level `cpu` block, a top-level `gate` block, `max_score = 30`, and an `objective_total`; the underlying metrics (rates, mean SSIM, measured FPS, `fps_points`, CPU mean percent, sample count, thresholds/formulas) are preserved for audit; the keys `h264` / `h265` SHALL NOT appear
+- **THEN** `score.json` includes a `2k` block, a `4k` block, a top-level `cpu` block, a top-level `gate` block, `max_score = 35`, and an `objective_total`; the underlying metrics (rates, mean SSIM, measured FPS, `fps_points`, CPU mean percent, sample count, thresholds/formulas) are preserved for audit; the keys `h264` / `h265` SHALL NOT appear
 
-#### Scenario: Perfect run scores the full 30
+#### Scenario: Perfect run scores the full 35
 
-- **WHEN** both profiles reach full correctness and full FPS and CPU is at full marks (`2k`: 5 + 5, `4k`: 5 + 10, `cpu`: 5)
-- **THEN** `score.json.gate.passed = true`, `score.json.2k.total = 10`, `score.json.4k.total = 15`, `score.json.cpu.points = 5`, and `objective_total = 30`
+- **WHEN** both profiles reach full correctness and full FPS and CPU is at full marks (`2k`: 5 + 5, `4k`: 5 + 10, `cpu`: 10)
+- **THEN** `score.json.gate.passed = true`, `score.json.2k.total = 10`, `score.json.4k.total = 15`, `score.json.cpu.points = 10`, and `objective_total = 35`
 
 #### Scenario: Gate passes but performance is poor
 
@@ -485,12 +485,12 @@ The repository SHALL include a focused benchmark or regression path that measure
 #### Scenario: CPU full marks at or below the full threshold
 
 - **WHEN** the gate passes, 4K `measured_fps / expected_fps >= 0.8`, and `mean_cpu_percent <= 12.0`
-- **THEN** `score.json.cpu.points = 5.0` with `cpu.gated = false` and `cpu.gate_reason = null`
+- **THEN** `score.json.cpu.points = 10.0` with `cpu.gated = false` and `cpu.gate_reason = null`
 
 #### Scenario: CPU linear partial credit in the calibrated band
 
 - **WHEN** the gate passes, 4K `measured_fps / expected_fps >= 0.8`, and `mean_cpu_percent = 20.0`
-- **THEN** `score.json.cpu.points = round((34.0 - 20.0) / (34.0 - 13.0) * 5, 2) = 3.33`
+- **THEN** `score.json.cpu.points = round((34.0 - 20.0) / (34.0 - 13.0) * 10, 2) = 6.67`
 
 #### Scenario: CPU zero above the zero threshold
 
@@ -664,13 +664,13 @@ For every evaluator invocation that creates a run directory and produces `score.
 |score|23.5
 |runtime|64231
 |info|
-Objective Score: 23.5 / 30
+Objective Score: 23.5 / 35
 Breakdown:
 - 2K Correctness: 5 / 5
 - 2K FPS: 5.00 / 5
 - 4K Correctness: 5 / 5
 - 4K FPS: 3.00 / 10
-- CPU: 3.00 / 5
+- CPU: 3.00 / 10
 
 Runtime Metrics:
 2k: measured_fps=30
@@ -722,7 +722,7 @@ The authorized `Capture Status:` and `Runtime Metrics:` sections are exempt from
 - **THEN** `result.info` exists in the run directory and in `dirname <submission_zip>`
 - **THEN** `|result|0` is written
 - **THEN** `|score|0` is written
-- **THEN** the `info` block shows `Objective Score: 0 / 30`, the 2K FPS item as `0.00 / 5`, the 4K FPS item as `0.00 / 10`, the CPU item as `0.00 / 5`, and the correctness items as `0 / 5`
+- **THEN** the `info` block shows `Objective Score: 0 / 35`, the 2K FPS item as `0.00 / 5`, the 4K FPS item as `0.00 / 10`, the CPU item as `0.00 / 10`, and the correctness items as `0 / 5`
 - **THEN** the `info` block includes an `Execution Feedback:` section when sanitized contestant feedback is available
 - **THEN** the internal raw failure reason appears in `debug`
 
@@ -909,7 +909,7 @@ Each script SHALL be safe to re-run, SHALL refuse to silently use system-wide to
 #### Scenario: Automated regression test
 
 - **WHEN** an organizer runs `scripts/test.sh` after a successful `scripts/deploy.sh`
-- **THEN** it evaluates each selected `test_submissions/*.zip` from a per-case isolated temporary upload directory, compares each resulting `score.json` to the expected outcome (with `max_score=30` and `2k` / `4k` / `cpu` block keys), prints per-case PASS/FAIL, and exits non-zero if any case fails
+- **THEN** it evaluates each selected `test_submissions/*.zip` from a per-case isolated temporary upload directory, compares each resulting `score.json` to the expected outcome (with `max_score=35` and `2k` / `4k` / `cpu` block keys), prints per-case PASS/FAIL, and exits non-zero if any case fails
 
 #### Scenario: Self-contained test session
 
@@ -928,7 +928,7 @@ Evaluator setup documentation SHALL list the host toolchain required by `scripts
 #### Scenario: Fresh Ubuntu 24.04 setup
 
 - **WHEN** an organizer follows the documented setup steps (`setup.sh` → `build.sh` → `deploy.sh`) on a fresh Ubuntu 24.04 host that has none of `ffmpeg`, `mediamtx`, `tesseract`, `leptonica`, or `libdmtx` pre-installed system-wide
-- **THEN** the evaluator runs end-to-end against the reference submission without missing-dependency errors and produces a complete `score.json` and `report.html` with `max_score=30`
+- **THEN** the evaluator runs end-to-end against the reference submission without missing-dependency errors and produces a complete `score.json` and `report.html` with `max_score=35`
 
 ### Requirement: Decode-Path Forensics
 
@@ -972,7 +972,7 @@ Per-profile decode **correctness** SHALL act as a **level-0 gate** that conditio
 
 **Gate criterion.** `scorer.py` SHALL expose `gate_passed(profile_metrics) -> bool`, which returns `True` iff `score_correctness(...) == 5` for the 2K metrics AND `score_correctness(...) == 5` for the 4K metrics — i.e. full decode correctness (`watermark_recognition_rate >= 0.95` AND `color_check_rate >= 0.95` AND `mean_ssim >= 0.90`) on BOTH profiles, reusing the existing full-correctness band with NO new tunables. If either profile's metrics are absent or lack the inspected fields, or a decode-path `violation` has zeroed a profile's correctness, the gate SHALL be treated as FAILED.
 
-**Effect of a passing gate.** The level-1 sub-scores SHALL be scored exactly as the Scoring requirement defines: each profile's `total = correctness_points + fps_points`, the CPU sub-score is computed normally, and `objective_total = 2k.total + 4k.total + cpu.points` (up to `30`).
+**Effect of a passing gate.** The level-1 sub-scores SHALL be scored exactly as the Scoring requirement defines: each profile's `total = correctness_points + fps_points`, the CPU sub-score is computed normally, and `objective_total = 2k.total + 4k.total + cpu.points` (up to `35`).
 
 **Effect of a failing gate.** Level-1 SHALL NOT contribute:
 

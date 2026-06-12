@@ -35,8 +35,8 @@ def _metrics() -> dict:
 
 def test_report_renders_capture_diagnostics_and_local_links(tmp_path):
     score = {
-        "objective_total": 30,
-        "max_score": 30,
+        "objective_total": 35,
+        "max_score": 35,
         "chromium_version": "test",
         "2k": _profile_score(),
         "4k": _profile_score(14.0),
@@ -81,7 +81,7 @@ def test_report_renders_capture_diagnostics_and_local_links(tmp_path):
 def test_report_renders_stage_timeout_and_layout_warnings(tmp_path):
     score = {
         "objective_total": 0,
-        "max_score": 30,
+        "max_score": 35,
         "chromium_version": "test",
         "2k": {"reason": "capture timeout after 120s"},
         "4k": _profile_score(14.0),
@@ -125,12 +125,12 @@ def test_report_renders_stage_timeout_and_layout_warnings(tmp_path):
 
 def test_report_shows_effective_bandwidth_limit(tmp_path):
     score = {
-        "objective_total": 30,
-        "max_score": 30,
+        "objective_total": 35,
+        "max_score": 35,
         "chromium_version": "test",
         "2k": _profile_score(),
         "4k": _profile_score(14.0),
-        "cpu": {"points": 5, "gated": False, "gate_reason": None,
+        "cpu": {"points": 10, "gated": False, "gate_reason": None,
                 "measured_on_profile": "4k", "gate_profile": "4k"},
     }
     (tmp_path / "score.json").write_text(json.dumps(score))
@@ -157,7 +157,7 @@ def test_report_shows_effective_bandwidth_limit(tmp_path):
 def test_report_reads_standalone_layout_diagnostics_when_timestamps_missing(tmp_path):
     score = {
         "objective_total": 0,
-        "max_score": 30,
+        "max_score": 35,
         "chromium_version": "test",
         "2k": {"reason": "capture interrupted"},
         "4k": None,
@@ -185,7 +185,7 @@ def test_report_reads_standalone_layout_diagnostics_when_timestamps_missing(tmp_
 def test_report_renders_capture_status(tmp_path):
     score = {
         "objective_total": 0,
-        "max_score": 30,
+        "max_score": 35,
         "chromium_version": "test",
         "2k": {"reason": "capture timeout after 120s"},
         "4k": None,
@@ -216,7 +216,7 @@ def test_report_renders_capture_status(tmp_path):
 def test_report_renders_contestant_memory_limit_metadata(tmp_path):
     score = {
         "objective_total": 0,
-        "max_score": 30,
+        "max_score": 35,
         "chromium_version": "test",
         "reason": "contestant_memory_limit_exceeded",
         "contestant_memory_limit": "10G",
@@ -246,7 +246,7 @@ def test_report_renders_contestant_memory_limit_metadata(tmp_path):
 def test_report_renders_unfinished_running_stage(tmp_path):
     score = {
         "objective_total": 0,
-        "max_score": 30,
+        "max_score": 35,
         "chromium_version": "test",
         "2k": {"reason": "capture interrupted"},
         "4k": None,

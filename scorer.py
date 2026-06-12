@@ -1,7 +1,7 @@
-"""Score the analyzer's metrics into the final 30-point objective total.
+"""Score the analyzer's metrics into the final 35-point objective total.
 
 2K: 5 correctness + 5 FPS, 4K: 5 correctness + 10 FPS, plus a
-0–5 CPU sub-score sampled during the 4K profile capture window.
+0–10 CPU sub-score sampled during the 4K profile capture window.
 """
 
 from __future__ import annotations
@@ -31,6 +31,13 @@ GATE_CPU_REASON = "gate_failed"
 # the linear FPS points awarded by each profile.
 FPS_LINEAR_FULL_SCORE_BY_PROFILE: dict[str, float] = {"2k": 5, "4k": 10}
 
+OBJECTIVE_MAX_SCORE: float = (
+    sum(FPS_LINEAR_FULL_SCORE_BY_PROFILE.values())
+    + 10  # correctness full marks per profile (5 + 5)
+    + 10  # CPU_LINEAR_FULL_SCORE
+)
+CPU_LINEAR_FULL_SCORE: float = 10.0
+
 
 # CPU sub-score tunables. Module-level so calibration is a one-line change.
 # Effective values applied to each run are echoed into score.json.cpu.thresholds_used.
@@ -38,7 +45,7 @@ CPU_GATE_FPS_RATIO: float = 0.8
 """measured sampled-profile fps / expected fps below this -> CPU score gated to 0."""
 
 CPU_FULL_THRESHOLD_PERCENT: float = 12.0
-"""mean_cpu_percent at or below this → full 5 points."""
+"""mean_cpu_percent at or below this → full CPU_LINEAR_FULL_SCORE points."""
 
 CPU_PARTIAL_START_PERCENT: float = 13.0
 """Anchor of the linear-decay partial-credit band."""
@@ -192,15 +199,15 @@ def score_cpu(
     expected_fps: float | None = None,
     gate_fps_ratio: float = CPU_GATE_FPS_RATIO,
 ) -> tuple[float, str | None]:
-    """Map a measured CPU mean into 0-5 points with gating.
+    """Map a measured CPU mean into 0-CPU_LINEAR_FULL_SCORE points with gating.
 
     Evaluation order (first match wins):
         1. fps gate (sampled round didn't really play) -> 0, "<profile>_fps_below_threshold"
         2. mean missing/None → 0, "sampler_no_data"
-        3. mean ≤ CPU_FULL_THRESHOLD_PERCENT → 5, None
+        3. mean ≤ CPU_FULL_THRESHOLD_PERCENT → CPU_LINEAR_FULL_SCORE, None
         4. mean > CPU_ZERO_THRESHOLD_PERCENT  → 0, None
         5. partial band → linear decay anchored at PARTIAL_START / ZERO,
-                          rounded to 2 decimal places, clamped to [0, 5]
+                          rounded to 2 decimal places, clamped to [0, CPU_LINEAR_FULL_SCORE]
     """
     expected = expected_fps if expected_fps is not None else EXPECTED_FPS[CPU_PROFILE]
     fps_gate_reason = f"{CPU_PROFILE}_fps_below_threshold"
@@ -211,12 +218,12 @@ def score_cpu(
     if mean_cpu_percent is None:
         return 0.0, "sampler_no_data"
     if mean_cpu_percent <= CPU_FULL_THRESHOLD_PERCENT:
-        return 5.0, None
+        return CPU_LINEAR_FULL_SCORE, None
     if mean_cpu_percent > CPU_ZERO_THRESHOLD_PERCENT:
         return 0.0, None
     span = CPU_ZERO_THRESHOLD_PERCENT - CPU_PARTIAL_START_PERCENT
-    raw = (CPU_ZERO_THRESHOLD_PERCENT - mean_cpu_percent) / span * 5.0
-    return max(0.0, min(5.0, round(raw, 2))), None
+    raw = (CPU_ZERO_THRESHOLD_PERCENT - mean_cpu_percent) / span * CPU_LINEAR_FULL_SCORE
+    return max(0.0, min(CPU_LINEAR_FULL_SCORE, round(raw, 2))), None
 
 
 def _thresholds_used(sample_hz: float | None) -> dict:
@@ -227,6 +234,7 @@ def _thresholds_used(sample_hz: float | None) -> dict:
         "zero_percent": CPU_ZERO_THRESHOLD_PERCENT,
         "min_samples": CPU_MIN_SAMPLES,
         "sample_hz": sample_hz if sample_hz is not None else 0.0,
+        "linear_full_score": CPU_LINEAR_FULL_SCORE,
     }
 
 
@@ -335,7 +343,7 @@ def build_score(
     contestant_memory_limit: str | None = None,
 ) -> dict:
     out: dict = {
-        "max_score": 30,
+        "max_score": OBJECTIVE_MAX_SCORE,
         "objective_total": 0,
         "cpu": None,
         "chromium_version": chromium_version,

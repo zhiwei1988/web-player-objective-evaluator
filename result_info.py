@@ -28,6 +28,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from scorer import CPU_LINEAR_FULL_SCORE, OBJECTIVE_MAX_SCORE
+
 
 # (label, profile_key, points_key, max_points, fixed2). profile_key=None marks
 # the CPU sub-score, which lives under score["cpu"]["points"].
@@ -36,7 +38,7 @@ _SCORE_ITEMS: tuple[tuple[str, str | None, str | None, int, bool], ...] = (
     ("2K FPS",         "2k", "fps_points",         5, True),
     ("4K Correctness", "4k", "correctness_points", 5, False),
     ("4K FPS",         "4k", "fps_points",         10, True),
-    ("CPU",            None, None,                 5, True),
+    ("CPU",            None, None,                 int(CPU_LINEAR_FULL_SCORE), True),
 )
 
 
@@ -147,7 +149,7 @@ def _capture_status_lines(run_dir: str | Path | None) -> list[str]:
 
 def _build_info_lines(score: dict, run_dir: str | Path | None) -> list[str]:
     objective_total = score.get("objective_total", 0)
-    max_score = score.get("max_score", 30)
+    max_score = score.get("max_score", OBJECTIVE_MAX_SCORE)
     lines = [
         f"Objective Score: {_fmt_num(objective_total)} / {_fmt_num(max_score)}",
         "Breakdown:",

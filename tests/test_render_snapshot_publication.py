@@ -7,7 +7,7 @@ from render_snapshot_publication import publish_rendered_snapshots
 
 
 def _write_score(path: Path) -> None:
-    path.write_text(json.dumps({"max_score": 30, "objective_total": 19.5}))
+    path.write_text(json.dumps({"max_score": 35, "objective_total": 19.5}))
 
 
 def _write_shots(run_dir: Path, profile: str, names: list[str]) -> dict[str, bytes]:

@@ -99,8 +99,8 @@ The whole contestant process tree (everything `start.sh` launches) runs under tw
 
 - **2K profile** (10 pts): 5 correctness + 5 linear fps points (`min(measured_fps / 20, 1) * 5`)
 - **4K profile** (15 pts): 5 correctness + 10 linear fps points (`min(measured_fps / 20, 1) * 10`); the 4K stream is encoded at 16 Mbps with a high-entropy reference so decode load is real
-- **CPU sub-score** (5 pts): sampled during the **4K** capture window (`mean_percent` normalized to all cores). Gated to 0 when 4K `measured_fps / 20 < 0.8`. Otherwise: `≤ 12%` → 5 pts; `> 34%` → 0 pts; between them `round((34 - mean_percent) / 21 * 5, 2)` (e.g. 20% → 3.33, 15% → 4.52). Thresholds are echoed in `score.json.cpu.thresholds_used`.
-- **Total**: 30
+- **CPU sub-score** (10 pts): sampled during the **4K** capture window (`mean_percent` normalized to all cores). Gated to 0 when 4K `measured_fps / 20 < 0.8`. Otherwise: `≤ 12%` → 10 pts; `> 34%` → 0 pts; between them `round((34 - mean_percent) / 21 * 10, 2)` (e.g. 20% → 6.67, 15% → 9.05). Thresholds are echoed in `score.json.cpu.thresholds_used`.
+- **Total**: 35
 
 ## Result artifacts
 

@@ -114,19 +114,19 @@ def test_build_score_gate_pass_scores_level_1_normally():
     }
     assert out["2k"]["total"] == out["2k"]["correctness_points"] + out["2k"]["fps_points"]
     assert out["4k"]["total"] == out["4k"]["correctness_points"] + out["4k"]["fps_points"]
-    assert out["cpu"]["points"] == 5
+    assert out["cpu"]["points"] == 10
     assert out["objective_total"] == out["2k"]["total"] + out["4k"]["total"] + out["cpu"]["points"]
 
 
-def test_build_score_perfect_run_scores_30():
+def test_build_score_perfect_run_scores_35():
     out = scorer.build_score(
         {"2k": _2k(EXPECTED["2k"]), "4k": _4k(EXPECTED["4k"], mean_cpu=2.0)},
         chromium_version="t",
     )
     assert out["2k"]["total"] == 10
     assert out["4k"]["total"] == 15
-    assert out["cpu"]["points"] == 5
-    assert out["objective_total"] == 30
+    assert out["cpu"]["points"] == 10
+    assert out["objective_total"] == 35
 
 
 def test_build_score_gate_pass_with_poor_performance_scores_correctness_10():

@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 from lib.profiles import PROFILES
+from scorer import CPU_LINEAR_FULL_SCORE, OBJECTIVE_MAX_SCORE
 
 # Single truth source for which profile the CPU sub-score is sampled on, used
 # only as a display fallback when score.json omits the cpu profile fields.
@@ -401,9 +402,9 @@ def render_report(
             if gated else '<span class="ok">scored</span>'
         )
         cpu_heading = (
-            "not scored (0.00/5)"
+            f"not scored (0.00/{CPU_LINEAR_FULL_SCORE:g})"
             if gate_reason == "gate_failed"
-            else f'{_fmt_metric(cpu.get("points", 0))}/5'
+            else f'{_fmt_metric(cpu.get("points", 0))}/{CPU_LINEAR_FULL_SCORE:g}'
         )
         # When the gate trips on sampled-profile FPS, surface the exact ratio
         # and cutoff so the contestant understands what throughput would have
@@ -505,7 +506,7 @@ def render_report(
         else (" (gated)" if cpu.get("gated") else "")
     )
     summary_rows.append(
-        f'<tr><th>CPU subtotal</th><td>{_fmt_metric(cpu.get("points", 0))}/5{cpu_summary_state}</td></tr>'
+        f'<tr><th>CPU subtotal</th><td>{_fmt_metric(cpu.get("points", 0))}/{CPU_LINEAR_FULL_SCORE:g}{cpu_summary_state}</td></tr>'
     )
     summary_rows.append(
         f'<tr><th>top-level reason</th><td>{html.escape(score.get("reason") or "")}</td></tr>'
@@ -551,7 +552,7 @@ code {{ background: #f5f5f7; padding: 1px 4px; border-radius: 3px; }}
 {review_banner}
 
 <h1>Evaluator report</h1>
-<p class="summary-big">{score.get("objective_total", 0)} / {score.get("max_score", 30)}</p>
+<p class="summary-big">{score.get("objective_total", 0)} / {score.get("max_score", OBJECTIVE_MAX_SCORE)}</p>
 
 <section>
   <h2>Summary</h2>

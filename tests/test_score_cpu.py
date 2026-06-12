@@ -22,30 +22,30 @@ def fps_at(ratio: float) -> float:
 @pytest.mark.parametrize(
     "mean_cpu, expected_points",
     [
-        (0.0, 5.0),
-        (10.0, 5.0),
-        (12.0, 5.0),
-        (13.0, 5.0),
-        (14.0, 4.76),
-        (15.0, 4.52),
-        (16.0, 4.29),
-        (17.0, 4.05),
-        (18.0, 3.81),
-        (19.0, 3.57),
-        (20.0, 3.33),
-        (21.0, 3.10),
-        (22.0, 2.86),
-        (23.0, 2.62),
-        (24.0, 2.38),
-        (25.0, 2.14),
-        (26.0, 1.90),
-        (27.0, 1.67),
-        (28.0, 1.43),
-        (29.0, 1.19),
-        (30.0, 0.95),
-        (31.0, 0.71),
-        (32.0, 0.48),
-        (33.0, 0.24),
+        (0.0, 10.0),
+        (10.0, 10.0),
+        (12.0, 10.0),
+        (13.0, 10.0),
+        (14.0, 9.52),
+        (15.0, 9.05),
+        (16.0, 8.57),
+        (17.0, 8.10),
+        (18.0, 7.62),
+        (19.0, 7.14),
+        (20.0, 6.67),
+        (21.0, 6.19),
+        (22.0, 5.71),
+        (23.0, 5.24),
+        (24.0, 4.76),
+        (25.0, 4.29),
+        (26.0, 3.81),
+        (27.0, 3.33),
+        (28.0, 2.86),
+        (29.0, 2.38),
+        (30.0, 1.90),
+        (31.0, 1.43),
+        (32.0, 0.95),
+        (33.0, 0.48),
         (34.0, 0.0),
         (34.001, 0.0),
         (99.0, 0.0),
@@ -88,7 +88,7 @@ def test_score_cpu_default_gate_passes_just_above_08():
         mean_cpu_percent=2.0,
         measured_fps=fps_at(0.81),
     )
-    assert points == 5.0
+    assert points == 10.0
     assert reason is None
 
 
@@ -149,12 +149,12 @@ def _4k_full_with_cpu(mean_cpu: float | None) -> dict:
     return block
 
 
-def test_build_score_max_score_is_30():
+def test_build_score_max_score_is_35():
     out = scorer.build_score(
         {"2k": _profile_full(), "4k": _4k_full_with_cpu(2.0)},
         chromium_version="test",
     )
-    assert out["max_score"] == 30
+    assert out["max_score"] == 35
 
 
 def test_build_score_objective_total_includes_cpu():
@@ -162,11 +162,11 @@ def test_build_score_objective_total_includes_cpu():
         {"2k": _profile_full(), "4k": _4k_full_with_cpu(2.0)},
         chromium_version="test",
     )
-    # 2k: 5 correctness + 5 fps = 10; 4k: 5 correctness + 10 fps = 15; CPU 5 -> 30
-    assert out["objective_total"] == 30
+    # 2k: 5 correctness + 5 fps = 10; 4k: 5 correctness + 10 fps = 15; CPU 10 -> 35
+    assert out["objective_total"] == 35
     assert out["2k"]["total"] == 10
     assert out["4k"]["total"] == 15
-    assert out["cpu"]["points"] == 5.0
+    assert out["cpu"]["points"] == 10.0
     assert out["cpu"]["gated"] is False
     assert out["cpu"]["gate_reason"] is None
     assert out["cpu"]["measured_on_profile"] == "4k"
@@ -188,6 +188,7 @@ def test_build_score_records_thresholds_used():
         "zero_percent",
         "min_samples",
         "sample_hz",
+        "linear_full_score",
     }
     assert t["gate_fps_ratio"] == scorer.CPU_GATE_FPS_RATIO
     assert t["full_percent"] == scorer.CPU_FULL_THRESHOLD_PERCENT
@@ -195,6 +196,7 @@ def test_build_score_records_thresholds_used():
     assert t["zero_percent"] == scorer.CPU_ZERO_THRESHOLD_PERCENT
     assert t["min_samples"] == scorer.CPU_MIN_SAMPLES
     assert t["sample_hz"] == 1.0  # value in the fixture cpu block
+    assert t["linear_full_score"] == scorer.CPU_LINEAR_FULL_SCORE
 
 
 def test_build_score_4k_round_failed_gates_cpu():

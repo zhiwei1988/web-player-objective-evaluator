@@ -84,14 +84,14 @@ def _cpu_block(points: int = 10, gate_reason: str | None = None) -> dict:
 
 def _full_score(
     *,
-    objective_total: float = 30,
+    objective_total: float = 35,
     two_k_fps_points: float = 5,
     four_k_fps_points: float = 5,
     cpu_points: int = 10,
     chromium_version: str = "Chromium 131.0.6778.85",
 ) -> dict:
     return {
-        "max_score": 30,
+        "max_score": 35,
         "objective_total": objective_total,
         "cpu": _cpu_block(points=cpu_points),
         "chromium_version": chromium_version,
@@ -114,7 +114,7 @@ def _with_decode_path(block: dict, verdict: str, *, checks: dict | None = None,
 def _failure_score(reason: str, *, chromium_version: str = "Chromium 131.0.6778.85") -> dict:
     """Mirror what scorer.build_score emits for a write_failure_score path."""
     return {
-        "max_score": 30,
+        "max_score": 35,
         "objective_total": 0,
         "cpu": _cpu_block(points=0, gate_reason="host_failure"),
         "chromium_version": chromium_version,
@@ -238,13 +238,13 @@ def test_info_lists_all_five_scoring_items_normal_run():
     fields = _parse_fields(text)
     info = fields["info"]
 
-    assert "Objective Score: 19.25 / 30" in info
+    assert "Objective Score: 19.25 / 35" in info
     assert "Breakdown:" in info
     assert "- 2K Correctness: 5 / 5" in info
     assert "- 2K FPS: 4.25 / 5" in info
     assert "- 4K Correctness: 5 / 5" in info
     assert "- 4K FPS: 3.00 / 10" in info
-    assert "- CPU: 3.00 / 5" in info
+    assert "- CPU: 3.00 / 10" in info
 
 
 def test_info_formats_cpu_scoring_item_with_two_decimal_places():
@@ -253,7 +253,7 @@ def test_info_formats_cpu_scoring_item_with_two_decimal_places():
     text = result_info.render(score=score, runtime_ms=42, run_dir="/r")
     fields = _parse_fields(text)
 
-    assert "- CPU: 3.25 / 5" in fields["info"]
+    assert "- CPU: 3.25 / 10" in fields["info"]
 
 
 def test_info_appends_execution_feedback_after_scoring_items():
@@ -266,7 +266,7 @@ def test_info_appends_execution_feedback_after_scoring_items():
     fields = _parse_fields(text)
     info = fields["info"]
 
-    assert "- CPU: 0.00 / 5" in info
+    assert "- CPU: 0.00 / 10" in info
     assert "Runtime Metrics:" in info
     assert "Execution Feedback:" in info
     assert info.index("Runtime Metrics:") < info.index("Execution Feedback:")
@@ -310,8 +310,8 @@ def test_info_omits_rendered_snapshots_when_metadata_missing():
     info = fields["info"]
 
     assert "Rendered Snapshots:" not in info
-    assert "Objective Score: 19.5 / 30" in info
-    assert "- CPU: 3.00 / 5" in info
+    assert "Objective Score: 19.5 / 35" in info
+    assert "- CPU: 3.00 / 10" in info
     assert "Runtime Metrics:" in info
     assert "2k: measured_fps=20" in info
     assert "cpu: mean_percent=3.2" in info
@@ -544,10 +544,10 @@ def test_score_field_drops_trailing_zeroes():
 
 
 def test_score_field_renders_integer_without_decimal():
-    score = _full_score(four_k_fps_points=10, objective_total=30)
+    score = _full_score(four_k_fps_points=10, objective_total=35)
     text = result_info.render(score=score, runtime_ms=1, run_dir="/r")
     fields = _parse_fields(text)
-    assert fields["score"] == "30"
+    assert fields["score"] == "35"
 
 
 def test_runtime_is_integer_milliseconds():
@@ -582,12 +582,12 @@ def test_contestant_failure_renders_zero_items_and_keeps_result_zero():
     assert fields["score"] == "0"
 
     info = fields["info"]
-    assert "Objective Score: 0 / 30" in info
+    assert "Objective Score: 0 / 35" in info
     assert "- 2K Correctness: 0 / 5" in info
     assert "- 2K FPS: 0.00 / 5" in info
     assert "- 4K Correctness: 0 / 5" in info
     assert "- 4K FPS: 0.00 / 10" in info
-    assert "- CPU: 0.00 / 5" in info
+    assert "- CPU: 0.00 / 10" in info
 
 
 def test_contestant_failure_keeps_raw_reason_out_of_info_block():
@@ -736,8 +736,8 @@ def test_cli_writes_result_info(tmp_path):
     assert fields["result"] == "0"
     assert fields["score"] == "19.5"
     assert fields["runtime"] == "64231"
-    assert "Objective Score: 19.5 / 30" in fields["info"]
-    assert "- CPU: 3.00 / 5" in fields["info"]
+    assert "Objective Score: 19.5 / 35" in fields["info"]
+    assert "- CPU: 3.00 / 10" in fields["info"]
 
 
 def test_cli_respects_explicit_result_code_one(tmp_path):
