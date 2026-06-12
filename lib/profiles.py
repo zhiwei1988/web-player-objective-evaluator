@@ -41,18 +41,18 @@ PROFILES: dict[str, ProfileSpec] = {
         rtsp_path="test/h265_2560_1440",
         stream_file="streams/h265_2560_1440.mp4",
         reference_dir="reference/2k",
-        cpu_sampled=True,
+        cpu_sampled=False,
     ),
     "4k": ProfileSpec(
         name="4k",
         width=3840,
         height=2160,
         fps=20,
-        bitrate="8M",
+        bitrate="16M",
         rtsp_path="test/h265_3840_2160",
         stream_file="streams/h265_3840_2160.mp4",
         reference_dir="reference/4k",
-        cpu_sampled=False,
+        cpu_sampled=True,
     ),
 }
 

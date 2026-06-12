@@ -261,6 +261,39 @@ apply_mediamtx_cap() {
     getcap "${bin}"
 }
 
+# The contestant bandwidth limiter shapes loopback egress with tc/htb and marks
+# contestant-cgroup packets with nftables. Both operations need CAP_NET_ADMIN.
+# We grant it on the system tc/nft binaries (not a private copy): they resolve
+# their libraries via the system linker cache, so — unlike the source-built
+# prefix — they are unaffected by the secure-exec LD_LIBRARY_PATH stripping that
+# the setcap'd mediamtx must work around. This is a host-wide grant; it is
+# acceptable only on the dedicated, single-purpose evaluation host.
+apply_net_admin_cap() {
+    command -v setcap >/dev/null \
+        || die "setcap not on PATH; install libcap2-bin and re-run"
+    local bin
+    for bin in tc nft; do
+        local path
+        path="$(command -v "${bin}" 2>/dev/null || true)"
+        [[ -n "${path}" ]] || die "${bin} not on PATH; install iproute2 / nftables and re-run"
+        # Resolve symlinks so setcap targets the real binary.
+        path="$(readlink -f "${path}")"
+        if getcap "${path}" 2>/dev/null | grep -q "cap_net_admin"; then
+            log "${bin}: cap_net_admin already set (${path})"
+            continue
+        fi
+        log "applying cap_net_admin to ${bin} at ${path} (requires sudo)"
+        if [[ $EUID -eq 0 ]]; then
+            setcap cap_net_admin+ep "${path}"
+        else
+            sudo -n setcap cap_net_admin+ep "${path}" 2>/dev/null \
+                || sudo setcap cap_net_admin+ep "${path}" \
+                || die "setcap cap_net_admin on ${bin} failed; contestant bandwidth limiter cannot run"
+        fi
+        getcap "${path}"
+    done
+}
+
 # Register third_party/install/lib with the system dynamic linker cache.
 # Without this, mediamtx (which has CAP_NET_BIND_SERVICE via setcap) runs in
 # secure-exec mode and the kernel strips LD_LIBRARY_PATH on exec; any ffmpeg
@@ -333,6 +366,7 @@ main() {
     build_ffmpeg
     build_mediamtx
     apply_ldconfig
+    apply_net_admin_cap
     install_python
     install_chromium
 

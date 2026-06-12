@@ -7,14 +7,14 @@ import pytest
 import scorer
 
 
-EXPECTED_2K = scorer.EXPECTED_FPS["2k"]
+EXPECTED_4K = scorer.EXPECTED_FPS["4k"]
 
 
 # Helpers --------------------------------------------------------------------
 
 def fps_at(ratio: float) -> float:
-    """Return a measured 2K fps that yields measured/expected == ratio."""
-    return EXPECTED_2K * ratio
+    """Return a measured 4K fps that yields measured/expected == ratio."""
+    return EXPECTED_4K * ratio
 
 
 # Score table covers the published mapping. -----------------------------------
@@ -63,7 +63,7 @@ def test_score_cpu_gates_when_fps_below_threshold():
         gate_fps_ratio=0.25,
     )
     assert points == 0.0
-    assert reason == "2k_fps_below_threshold"
+    assert reason == "4k_fps_below_threshold"
 
 
 def test_score_cpu_default_gate_trips_just_below_065():
@@ -73,7 +73,7 @@ def test_score_cpu_default_gate_trips_just_below_065():
         measured_fps=fps_at(0.64),
     )
     assert points == 0.0
-    assert reason == "2k_fps_below_threshold"
+    assert reason == "4k_fps_below_threshold"
 
 
 def test_score_cpu_default_gate_passes_just_above_065():
@@ -94,7 +94,7 @@ def test_score_cpu_default_gate_trips_when_only_partial_fps_credit():
         measured_fps=fps_at(0.50),
     )
     assert points == 0.0
-    assert reason == "2k_fps_below_threshold"
+    assert reason == "4k_fps_below_threshold"
 
 
 def test_score_cpu_gates_when_sampler_missing():
@@ -113,7 +113,7 @@ def test_score_cpu_gate_takes_precedence_over_value():
         gate_fps_ratio=0.25,
     )
     assert points == 0.0
-    assert reason == "2k_fps_below_threshold"
+    assert reason == "4k_fps_below_threshold"
 
 
 # build_score wiring ---------------------------------------------------------
@@ -127,7 +127,7 @@ def _profile_full() -> dict:
     }
 
 
-def _2k_full_with_cpu(mean_cpu: float | None) -> dict:
+def _4k_full_with_cpu(mean_cpu: float | None) -> dict:
     block = _profile_full()
     if mean_cpu is not None:
         block["cpu"] = {
@@ -145,7 +145,7 @@ def _2k_full_with_cpu(mean_cpu: float | None) -> dict:
 
 def test_build_score_max_score_is_30():
     out = scorer.build_score(
-        {"2k": _2k_full_with_cpu(2.0), "4k": _profile_full()},
+        {"2k": _profile_full(), "4k": _4k_full_with_cpu(2.0)},
         chromium_version="test",
     )
     assert out["max_score"] == 30
@@ -153,7 +153,7 @@ def test_build_score_max_score_is_30():
 
 def test_build_score_objective_total_includes_cpu():
     out = scorer.build_score(
-        {"2k": _2k_full_with_cpu(2.0), "4k": _profile_full()},
+        {"2k": _profile_full(), "4k": _4k_full_with_cpu(2.0)},
         chromium_version="test",
     )
     # 2k: 5 correctness + 5 fps = 10; 4k: 5 correctness + 10 fps = 15; CPU 5 -> 30
@@ -163,15 +163,15 @@ def test_build_score_objective_total_includes_cpu():
     assert out["cpu"]["points"] == 5.0
     assert out["cpu"]["gated"] is False
     assert out["cpu"]["gate_reason"] is None
-    assert out["cpu"]["measured_on_profile"] == "2k"
-    assert out["cpu"]["gate_profile"] == "2k"
+    assert out["cpu"]["measured_on_profile"] == "4k"
+    assert out["cpu"]["gate_profile"] == "4k"
     assert out["cpu"]["expected_fps"] == 20.0
     assert out["cpu"]["measured_fps"] == 20.0
 
 
 def test_build_score_records_thresholds_used():
     out = scorer.build_score(
-        {"2k": _2k_full_with_cpu(2.0), "4k": _profile_full()},
+        {"2k": _profile_full(), "4k": _4k_full_with_cpu(2.0)},
         chromium_version="test",
     )
     t = out["cpu"]["thresholds_used"]
@@ -191,19 +191,19 @@ def test_build_score_records_thresholds_used():
     assert t["sample_hz"] == 1.0  # value in the fixture cpu block
 
 
-def test_build_score_2k_round_failed_gates_cpu():
+def test_build_score_4k_round_failed_gates_cpu():
     out = scorer.build_score(
-        {"2k": None, "4k": _profile_full()},
+        {"2k": _profile_full(), "4k": None},
         chromium_version="test",
     )
     assert out["cpu"]["points"] == 0.0
     assert out["cpu"]["gated"] is True
-    assert out["cpu"]["gate_reason"] == "2k_round_failed"
+    assert out["cpu"]["gate_reason"] == "4k_round_failed"
     assert out["cpu"]["mean_percent"] is None
 
 
 def test_build_score_sampler_no_data_gates_cpu():
-    # 2k metrics present but cpu missing
+    # 4k metrics present but cpu missing
     out = scorer.build_score(
         {"2k": _profile_full(), "4k": _profile_full()},
         chromium_version="test",
@@ -227,7 +227,7 @@ def test_build_score_container_mode_unsupported():
 
 def test_build_score_no_h26x_keys():
     out = scorer.build_score(
-        {"2k": _2k_full_with_cpu(2.0), "4k": _profile_full()},
+        {"2k": _profile_full(), "4k": _4k_full_with_cpu(2.0)},
         chromium_version="test",
     )
     assert "h264" not in out

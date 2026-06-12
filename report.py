@@ -13,6 +13,10 @@ from pathlib import Path
 
 from lib.profiles import PROFILES
 
+# Single truth source for which profile the CPU sub-score is sampled on, used
+# only as a display fallback when score.json omits the cpu profile fields.
+CPU_PROFILE = next((name for name, spec in PROFILES.items() if spec.cpu_sampled), "4k")
+
 # Thresholds for "suspicious" gallery picks.
 SUSPICIOUS_SSIM = 0.70
 
@@ -184,6 +188,7 @@ def _stage_diagnostics_section(run_dir: Path) -> str:
         return ""
     budgets = data.get("budgets") if isinstance(data.get("budgets"), dict) else {}
     memory_limit = budgets.get("contestant_memory_max") if isinstance(budgets, dict) else None
+    bandwidth_limit = budgets.get("contestant_bandwidth_max") if isinstance(budgets, dict) else None
     rows = []
     for record in data.get("stages") or []:
         if not isinstance(record, dict):
@@ -207,16 +212,21 @@ def _stage_diagnostics_section(run_dir: Path) -> str:
             f"<td>{html.escape(reason)}</td>"
             "</tr>"
         )
-    if not rows and not memory_limit:
+    if not rows and not memory_limit and not bandwidth_limit:
         return ""
     memory_limit_html = (
         f'<p>contestant memory limit: <code>{html.escape(str(memory_limit))}</code></p>'
         if memory_limit else ""
     )
+    bandwidth_limit_html = (
+        f'<p>contestant bandwidth limit: <code>{html.escape(str(bandwidth_limit))}</code></p>'
+        if bandwidth_limit else ""
+    )
     return f'''
 <section>
   <h2>Stage diagnostics</h2>
   {memory_limit_html}
+  {bandwidth_limit_html}
   <table>
     <tr><th>stage</th><th>status</th><th>timeout</th><th>duration</th><th>reason</th></tr>
     {''.join(rows)}
@@ -399,7 +409,7 @@ def render_report(
         # and cutoff so the contestant understands what throughput would have
         # unlocked CPU.
         gate_callout = ""
-        gate_profile = cpu.get("gate_profile") or cpu.get("measured_on_profile") or "2k"
+        gate_profile = cpu.get("gate_profile") or cpu.get("measured_on_profile") or CPU_PROFILE
         if gated and gate_reason == f"{gate_profile}_fps_below_threshold":
             gate_ratio = thresholds.get("gate_fps_ratio")
             if isinstance(gate_ratio, (int, float)):

@@ -88,11 +88,18 @@ The frontend must expose `/play?profile=<2k|4k>&autoplay=1`, render the video in
 
 The evaluation host is Ubuntu 24.04 with Google Chrome (the exact Chrome version is recorded in every `score.json` and `report.html` as `chromium_version`). The evaluator screenshots `[data-testid="player-video"]` and scores the result; rendering strategy is up to the contestant.
 
+### Resource limits (environment facts)
+
+The whole contestant process tree (everything `start.sh` launches) runs under two hard limits enforced by the evaluator:
+
+- **Memory**: a hard memory cap on the process tree (default `10G`). Exceeding it fails the run as a contestant-side error.
+- **Egress bandwidth**: the process tree's combined IP-layer egress is physically shaped to `100 Mbps` (loopback included). This is a single shared bucket for all the contestant's processes. Transport that does not cross the IP layer — unix domain sockets, shared memory, pipes — is **not** shaped; designs that ship decoded frames as raw pixels over localhost TCP will be throttled, while compressing before transport (or decoding in the browser) stays well under the cap. There is no separate penalty for hitting the cap; over-limit traffic simply queues/drops, lowering measured FPS.
+
 ## Scoring breakdown
 
-- **2K profile** (10 pts): 5 correctness + 5 threshold-scored fps against the 20fps source
-- **4K profile** (10 pts): 5 correctness + 5 linear fps points (`min(measured_fps / 20, 1) * 5`)
-- **CPU sub-score** (10 pts): sampled during the 2K capture window; gated to 0 if 2K fps fails to clear the CPU throughput gate
+- **2K profile** (10 pts): 5 correctness + 5 linear fps points (`min(measured_fps / 20, 1) * 5`)
+- **4K profile** (15 pts): 5 correctness + 10 linear fps points (`min(measured_fps / 20, 1) * 10`); the 4K stream is encoded at 16 Mbps with a high-entropy reference so decode load is real
+- **CPU sub-score** (5 pts): sampled during the **4K** capture window; gated to 0 if 4K fps fails to clear the CPU throughput gate
 - **Total**: 30
 
 ## Result artifacts

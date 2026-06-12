@@ -14,6 +14,17 @@ def _2k(measured_fps: float, *, wm: float = 1.0) -> dict:
         "color_check_rate": 1.0,
         "mean_ssim": 0.95,
         "measured_fps": measured_fps,
+    }
+
+
+def _4k(measured_fps: float, *, wm: float = 1.0) -> dict:
+    # The CPU sub-score is sampled on the 4K round, so the cpu sub-object lives
+    # on the 4K metrics.
+    return {
+        "watermark_recognition_rate": wm,
+        "color_check_rate": 1.0,
+        "mean_ssim": 0.95,
+        "measured_fps": measured_fps,
         "cpu": {
             "mean_percent": 2.0,
             "sample_count": 9,
@@ -22,15 +33,6 @@ def _2k(measured_fps: float, *, wm: float = 1.0) -> dict:
             "normalization": "all_cores_total",
             "sample_hz_used": 1.0,
         },
-    }
-
-
-def _4k(measured_fps: float, *, wm: float = 1.0) -> dict:
-    return {
-        "watermark_recognition_rate": wm,
-        "color_check_rate": 1.0,
-        "mean_ssim": 0.95,
-        "measured_fps": measured_fps,
     }
 
 

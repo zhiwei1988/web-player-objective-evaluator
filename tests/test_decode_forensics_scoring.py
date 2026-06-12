@@ -1,6 +1,7 @@
 """Tests for the scorer's decode-path gate: a `violation` verdict zeros the
-profile's correctness + FPS (and CPU for 2k); `ok`/`inconclusive`/absent are
-fail-open and leave scoring unchanged (inconclusive sets review_required).
+profile's correctness + FPS (and CPU for the 4K-sampled round); `ok`/
+`inconclusive`/absent are fail-open and leave scoring unchanged (inconclusive
+sets review_required).
 """
 
 from __future__ import annotations
@@ -53,12 +54,13 @@ def test_violation_zeros_4k_correctness_and_fps():
     assert out["4k"]["decode_path"]["verdict"] == "violation"
 
 
-def test_violation_on_2k_also_zeros_cpu():
-    # 2k metrics that would otherwise earn full FPS + full CPU.
-    m2k = _forensics(_with_cpu(_clean_metrics(EXPECTED["2k"]), 2.0), "violation")
-    out = scorer.build_score({"2k": m2k, "4k": None}, chromium_version="t")
-    assert out["2k"]["correctness_points"] == 0
-    assert out["2k"]["fps_points"] == 0
+def test_violation_on_4k_also_zeros_cpu():
+    # 4k metrics that would otherwise earn full FPS + full CPU; the CPU
+    # sub-score is sampled on the 4K round, so its violation overrides CPU.
+    m4k = _forensics(_with_cpu(_clean_metrics(EXPECTED["4k"]), 2.0), "violation")
+    out = scorer.build_score({"2k": None, "4k": m4k}, chromium_version="t")
+    assert out["4k"]["correctness_points"] == 0
+    assert out["4k"]["fps_points"] == 0
     assert out["cpu"]["points"] == 0
     assert out["cpu"]["gated"] is True
     assert out["cpu"]["gate_reason"] == "decode_path_violation"

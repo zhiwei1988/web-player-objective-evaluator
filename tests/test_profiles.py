@@ -22,7 +22,7 @@ def test_profile_2k_values():
     assert spec.stream_file == "streams/h265_2560_1440.mp4"
     assert spec.reference_dir == "reference/2k"
     assert spec.duration_s == 30
-    assert spec.cpu_sampled is True
+    assert spec.cpu_sampled is False
 
 
 def test_profile_4k_values():
@@ -30,17 +30,17 @@ def test_profile_4k_values():
     assert spec.width == 3840
     assert spec.height == 2160
     assert spec.fps == 20
-    assert spec.bitrate == "8M"
+    assert spec.bitrate == "16M"
     assert spec.rtsp_path == "test/h265_3840_2160"
     assert spec.stream_file == "streams/h265_3840_2160.mp4"
     assert spec.reference_dir == "reference/4k"
     assert spec.duration_s == 30
-    assert spec.cpu_sampled is False
+    assert spec.cpu_sampled is True
 
 
-def test_only_2k_is_cpu_sampled():
+def test_only_4k_is_cpu_sampled():
     sampled = [name for name, s in PROFILES.items() if s.cpu_sampled]
-    assert sampled == ["2k"]
+    assert sampled == ["4k"]
 
 
 def test_rtsp_constants():

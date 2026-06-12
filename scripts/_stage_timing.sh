@@ -37,6 +37,9 @@ data = {
         "contestant_memory_max": os.environ.get("EVALUATOR_CONTESTANT_MEMORY_MAX_EFFECTIVE")
             or os.environ.get("EVALUATOR_CONTESTANT_MEMORY_MAX")
             or "10G",
+        "contestant_bandwidth_max": os.environ.get("EVALUATOR_CONTESTANT_BANDWIDTH_MAX_EFFECTIVE")
+            or os.environ.get("EVALUATOR_CONTESTANT_BANDWIDTH_MAX")
+            or "100mbit",
     },
     "stages": [],
 }
@@ -71,6 +74,9 @@ data = {
         "contestant_memory_max": os.environ.get("EVALUATOR_CONTESTANT_MEMORY_MAX_EFFECTIVE")
             or os.environ.get("EVALUATOR_CONTESTANT_MEMORY_MAX")
             or "10G",
+        "contestant_bandwidth_max": os.environ.get("EVALUATOR_CONTESTANT_BANDWIDTH_MAX_EFFECTIVE")
+            or os.environ.get("EVALUATOR_CONTESTANT_BANDWIDTH_MAX")
+            or "100mbit",
     },
     "stages": [],
 }

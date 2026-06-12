@@ -968,7 +968,7 @@ def _cli() -> int:
     p.add_argument("--fps", required=True, type=float)
     p.add_argument("--contestant-pgid", type=int, default=None,
                    help="When set AND the active profile has cpu_sampled=True "
-                        "(currently 2k only), sample the PGID's CPU.")
+                        "(currently 4k only), sample the PGID's CPU.")
     p.add_argument("--cpu-sample-hz", type=float, default=None,
                    help="Sampler tick rate (debug-only, will be retired once calibrated).")
     p.add_argument("--capture-strategy", choices=CAPTURE_STRATEGIES, default=None,

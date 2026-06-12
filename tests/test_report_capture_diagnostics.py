@@ -41,11 +41,11 @@ def test_report_renders_capture_diagnostics_and_local_links(tmp_path):
         "2k": _profile_score(),
         "4k": _profile_score(14.0),
         "cpu": {
-            "points": 10,
+            "points": 5,
             "gated": False,
             "gate_reason": None,
-            "measured_on_profile": "2k",
-            "gate_profile": "2k",
+            "measured_on_profile": "4k",
+            "gate_profile": "4k",
             "expected_fps": 20.0,
             "measured_fps": 18.0,
             "thresholds_used": {},
@@ -70,7 +70,7 @@ def test_report_renders_capture_diagnostics_and_local_links(tmp_path):
     assert "2k_metrics.json" in html
     assert "4k_screenshots/" in html
     assert "measured on profile" in html
-    assert "2k" in html
+    assert "<td>4k</td>" in html  # CPU sub-score is now sampled on the 4K round
     assert "linear" in html
     assert 'src="http://' not in html
     assert 'src="https://' not in html
@@ -121,6 +121,37 @@ def test_report_renders_stage_timeout_and_layout_warnings(tmp_path):
     assert "Layout diagnostics" in html
     assert "descendant canvas is larger than clipped host" in html
     assert "4k_screenshots/timestamps.json" in html
+
+
+def test_report_shows_effective_bandwidth_limit(tmp_path):
+    score = {
+        "objective_total": 30,
+        "max_score": 30,
+        "chromium_version": "test",
+        "2k": _profile_score(),
+        "4k": _profile_score(14.0),
+        "cpu": {"points": 5, "gated": False, "gate_reason": None,
+                "measured_on_profile": "4k", "gate_profile": "4k"},
+    }
+    (tmp_path / "score.json").write_text(json.dumps(score))
+    (tmp_path / "stage_timings.json").write_text(json.dumps({
+        "budgets": {
+            "capture_timeout_seconds": 120,
+            "contestant_memory_max": "10G",
+            "contestant_bandwidth_max": "100mbit",
+        },
+        "stages": [],
+    }))
+    out = tmp_path / "report.html"
+    report.render_report(
+        score=score,
+        profile_metrics={"2k": _metrics(), "4k": _metrics()},
+        output=out,
+        run_dir=tmp_path,
+    )
+    html = out.read_text()
+    assert "contestant bandwidth limit" in html
+    assert "100mbit" in html
 
 
 def test_report_reads_standalone_layout_diagnostics_when_timestamps_missing(tmp_path):

@@ -31,9 +31,17 @@ COLOR_BLOCKS = (
     (255, 255, 255),
 )
 
-# Background gradient base — fills the central area so SSIM has structure to
-# compare against. Deterministic per (frame_number, codec).
-BG_BASE = (24, 28, 40)
+# Background tile size (pixels) for the high-entropy reference field. Each tile
+# is one deterministic random color seeded by the frame number. The size is a
+# trade-off, calibrated empirically:
+#   - smaller tiles  -> more entropy, fills the 4K encoder toward its 16 Mbps
+#     target and raises decode CPU load, but finer than ~the 1280x720 capture
+#     can resolve collapses SSIM for everyone;
+#   - larger tiles   -> survives the capture-and-resize SSIM path with headroom,
+#     but compresses too well and the stream falls back toward ~8 Mbps.
+# 16px@4K lands ~5px in the 1280-wide screenshot — resolvable — while still
+# carrying enough per-frame detail to fill the bitrate.
+BG_TILE_PX = 16
 
 
 @dataclass(frozen=True)
@@ -193,27 +201,32 @@ def draw_watermark(frame: Image.Image, frame_number: int, fps: float) -> Image.I
 
 
 def _background(width: int, height: int, frame_number: int) -> Image.Image:
-    """Deterministic non-uniform background so SSIM has signal to compare
-    against. The pattern shifts per-frame, giving the analyzer a way to detect
-    static-image cheats via SSIM divergence even if DataMatrix decodes.
+    """Deterministic, per-frame-varying high-entropy background.
 
-    Vertical gradient × horizontal stripes that translate by frame number.
-    Vectorised via numpy: a Python-level pixel loop on a 2560x1440 frame is
-    ~3 s per frame, which would make a full 1650-frame regen take 80 minutes.
+    A field of `BG_TILE_PX`-sized tiles, each a random color seeded by the frame
+    number. This serves three purposes at once:
+
+      - **Bitrate**: flat synthetic backgrounds (a smooth gradient) compress to a
+        near-lossless ~8 Mbps at 4K no matter the `-b:v` target; a tiled random
+        field carries real detail so the encoder fills toward 16 Mbps and the
+        decode imposes a genuine per-frame CPU load.
+      - **Anti-cheat**: the field changes every frame, so a static-image cheat
+        diverges under SSIM even if its DataMatrix decodes.
+      - **Determinism**: seeding numpy's PCG64 with the frame number makes the
+        field byte-reproducible across regenerations, so reference PNGs match
+        and the analyzer can compare by frame number.
+
+    Vectorised via numpy: a Python-level pixel loop on a 3840x2160 frame would
+    make a full regen take many minutes.
     """
     import numpy as np
-    phase = frame_number * 7
-    y_idx = np.arange(height, dtype=np.int32)
-    x_idx = np.arange(width, dtype=np.int32)
-    v = (y_idx * 200) // height                            # shape (H,)
-    stripe = (((x_idx + phase) // 32) & 1).astype(bool)    # shape (W,)
-    # Broadcast (H, W) gradient + stripe selector
-    v_col = v[:, None]                                     # (H, 1)
-    stripe_row = stripe[None, :]                           # (1, W)
-    r = (BG_BASE[0] + v_col + np.where(stripe_row, 40, 0)) & 0xFF
-    g = (BG_BASE[1] + (v_col // 2) + np.where(stripe_row, 0, 60)) & 0xFF
-    b = (BG_BASE[2] + (v_col // 3) + np.where(stripe_row, 20, 30)) & 0xFF
-    arr = np.stack([r, g, b], axis=-1).astype(np.uint8)
+    tile = BG_TILE_PX
+    tiles_h = -(-height // tile)  # ceil division
+    tiles_w = -(-width // tile)
+    rng = np.random.default_rng(frame_number)
+    tiles = rng.integers(0, 256, size=(tiles_h, tiles_w, 3), dtype=np.uint8)
+    arr = np.repeat(np.repeat(tiles, tile, axis=0), tile, axis=1)
+    arr = arr[:height, :width]
     return Image.fromarray(arr, mode="RGB")
 
 

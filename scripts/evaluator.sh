@@ -122,6 +122,7 @@ cleanup() {
     trap - EXIT INT TERM
     stg_stop_total_watchdog
     clx_cleanup_contestant
+    clx_teardown_contestant_bandwidth_limit
     stop_mediamtx
     if [[ -n "${RUN_DIR:-}" && -d "${RUN_DIR}" && ! -f "${SCORE_FILE}" ]]; then
         write_failure_score "${FAILURE_REASON:-${HOST_FAILURE_REASON:-contestant_frontend_unavailable}}"
@@ -143,6 +144,10 @@ clx_acquire_lock
 clx_prepare_run_dir "${TEAM_ID}"
 if ! clx_load_contestant_memory_limit; then
     FAILURE_REASON="contestant memory limiter configuration invalid"
+    exit 1
+fi
+if ! clx_load_contestant_bandwidth_limit; then
+    FAILURE_REASON="contestant bandwidth limiter configuration invalid"
     exit 1
 fi
 stg_load_timeout_budgets
@@ -174,9 +179,23 @@ if ! clx_preflight_contestant_memory_limiter; then
     exit 1
 fi
 
+if ! clx_preflight_contestant_bandwidth_limiter; then
+    FAILURE_REASON="contestant bandwidth limiter unavailable"
+    log "${FAILURE_REASON}"
+    exit 1
+fi
+
 clx_precheck_ports 8080
 clx_extract_submission "${SUBMISSION_ZIP}"
 clx_start_contestant
+# The contestant cgroup exists only after the transient unit is started, so the
+# egress shaper (which matches that cgroup) is applied here, before the
+# readiness wait and any scored capture. MUST NOT silently run unshaped.
+if ! clx_setup_contestant_bandwidth_limit; then
+    FAILURE_REASON="contestant bandwidth limiter setup failed"
+    log "${FAILURE_REASON}"
+    exit 1
+fi
 
 if ! clx_wait_frontend_ready; then
     if clx_contestant_memory_limit_exceeded; then
