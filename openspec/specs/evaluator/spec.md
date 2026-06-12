@@ -448,7 +448,7 @@ The repository SHALL include a focused benchmark or regression path that measure
 
 **FPS** (linear absolute, both profiles): each profile's expected FPS SHALL come from `PROFILES[profile].fps` and default to `20`. Each profile's per-profile FPS full score SHALL come from `FPS_LINEAR_FULL_SCORE_BY_PROFILE` (`{"2k": 5, "4k": 10}`) as the single source of truth. `score.json.<profile>.fps_points` SHALL equal `round(min(max(measured_fps, 0) / expected_fps, 1.0) * FPS_LINEAR_FULL_SCORE_BY_PROFILE[profile], 2)`. Each profile block SHALL record `fps_scoring_mode = "linear_absolute"`, `fps_linear_full_score` (5 for 2K, 10 for 4K), and `expected_fps`. No profile block SHALL carry `fps_full_threshold_used` or `fps_partial_threshold_used`; threshold-based 2K FPS scoring and the `FPS_FULL_RATIO_BY_PROFILE` / `FPS_PARTIAL_RATIO_BY_PROFILE` tables are removed.
 
-**CPU**: `scorer.score_cpu(...)` SHALL return a value in `[0, 5]` with a nullable `gate_reason`, computed exactly as before (fps floor → `sampler_no_data` → full/zero/partial bands). The CPU sub-score SHALL be measured on the profile whose `ProfileSpec.cpu_sampled` flag is true (`4k` by default), and `scorer.CPU_PROFILE` SHALL be derived from that flag rather than hard-coded. The CPU band thresholds (`CPU_FULL_THRESHOLD_PERCENT`, `CPU_PARTIAL_START_PERCENT`, `CPU_ZERO_THRESHOLD_PERCENT`, `CPU_GATE_FPS_RATIO`) SHALL be calibrated for the CPU-sampled profile's load and SHALL remain module-level constants echoed into `score.json.cpu.thresholds_used`. The CPU block SHALL record `measured_on_profile` and `gate_profile` equal to the CPU-sampled profile name (`4k` by default), `expected_fps`, `measured_fps`, `thresholds_used`, `mean_percent`, `sample_count`, and the existing audit fields.
+**CPU**: `scorer.score_cpu(...)` SHALL return a value in `[0, 5]` with a nullable `gate_reason`. The CPU sub-score SHALL be measured on the profile whose `ProfileSpec.cpu_sampled` flag is true (`4k` by default), and `scorer.CPU_PROFILE` SHALL be derived from that flag rather than hard-coded. Evaluation order (first match wins): (1) when `measured_fps / expected_fps < CPU_GATE_FPS_RATIO` on the CPU-sampled profile → `(0, "<profile>_fps_below_threshold")`; (2) when `mean_cpu_percent` is missing → `(0, "sampler_no_data")`; (3) when `mean_cpu_percent <= CPU_FULL_THRESHOLD_PERCENT` → `(5, None)`; (4) when `mean_cpu_percent > CPU_ZERO_THRESHOLD_PERCENT` → `(0, None)`; (5) otherwise linear partial credit `round((CPU_ZERO_THRESHOLD_PERCENT - mean_cpu_percent) / (CPU_ZERO_THRESHOLD_PERCENT - CPU_PARTIAL_START_PERCENT) * 5, 2)` clamped to `[0, 5]`. Calibrated defaults for 4K@16 Mbps on the canonical 16-core host: `CPU_GATE_FPS_RATIO = 0.8`, `CPU_FULL_THRESHOLD_PERCENT = 12.0`, `CPU_PARTIAL_START_PERCENT = 13.0`, `CPU_ZERO_THRESHOLD_PERCENT = 34.0`. These SHALL remain module-level constants in `scorer.py` and the values applied to each run SHALL be echoed into `score.json.cpu.thresholds_used`. The CPU block SHALL record `measured_on_profile` and `gate_profile` equal to the CPU-sampled profile name (`4k` by default), `expected_fps`, `measured_fps`, `thresholds_used`, `mean_percent`, `sample_count`, and the existing audit fields.
 
 **Level-0 gate conditions the total** (see the Level-0 Gate (Decode Correctness) requirement). The gate passes iff `2k.correctness_points == 5` AND `4k.correctness_points == 5`.
 
@@ -481,6 +481,21 @@ The repository SHALL include a focused benchmark or regression path that measure
 
 - **WHEN** the 4K round's `decode_forensics.verdict == "violation"` (so `4k.correctness_points = 0` and the gate fails) and 4K is the CPU-sampled profile
 - **THEN** `objective_total = 2k.correctness_points` (4K contributes 0), level-1 is not scored, and the 4K `violation` keeps `cpu.gate_reason = "decode_path_violation"` rather than `"gate_failed"`
+
+#### Scenario: CPU full marks at or below the full threshold
+
+- **WHEN** the gate passes, 4K `measured_fps / expected_fps >= 0.8`, and `mean_cpu_percent <= 12.0`
+- **THEN** `score.json.cpu.points = 5.0` with `cpu.gated = false` and `cpu.gate_reason = null`
+
+#### Scenario: CPU linear partial credit in the calibrated band
+
+- **WHEN** the gate passes, 4K `measured_fps / expected_fps >= 0.8`, and `mean_cpu_percent = 20.0`
+- **THEN** `score.json.cpu.points = round((34.0 - 20.0) / (34.0 - 13.0) * 5, 2) = 3.33`
+
+#### Scenario: CPU zero above the zero threshold
+
+- **WHEN** the gate passes, 4K `measured_fps / expected_fps >= 0.8`, and `mean_cpu_percent > 34.0`
+- **THEN** `score.json.cpu.points = 0.0` with `cpu.gated = false` and `cpu.gate_reason = null` (`mean_percent` is still recorded for audit)
 
 #### Scenario: OK or inconclusive verdict does not change scoring
 

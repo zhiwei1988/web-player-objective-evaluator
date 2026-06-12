@@ -1,7 +1,7 @@
 """Score the analyzer's metrics into the final 30-point objective total.
 
 2K: 5 correctness + 5 FPS, 4K: 5 correctness + 10 FPS, plus a
-0–5 CPU sub-score sampled during the 2K profile capture window.
+0–5 CPU sub-score sampled during the 4K profile capture window.
 """
 
 from __future__ import annotations
@@ -34,16 +34,16 @@ FPS_LINEAR_FULL_SCORE_BY_PROFILE: dict[str, float] = {"2k": 5, "4k": 10}
 
 # CPU sub-score tunables. Module-level so calibration is a one-line change.
 # Effective values applied to each run are echoed into score.json.cpu.thresholds_used.
-CPU_GATE_FPS_RATIO: float = 0.65
+CPU_GATE_FPS_RATIO: float = 0.8
 """measured sampled-profile fps / expected fps below this -> CPU score gated to 0."""
 
-CPU_FULL_THRESHOLD_PERCENT: float = 5.0
+CPU_FULL_THRESHOLD_PERCENT: float = 12.0
 """mean_cpu_percent at or below this → full 5 points."""
 
-CPU_PARTIAL_START_PERCENT: float = 6.0
+CPU_PARTIAL_START_PERCENT: float = 13.0
 """Anchor of the linear-decay partial-credit band."""
 
-CPU_ZERO_THRESHOLD_PERCENT: float = 20.0
+CPU_ZERO_THRESHOLD_PERCENT: float = 34.0
 """mean_cpu_percent above this → 0 points."""
 
 CPU_MIN_SAMPLES: int = 3

@@ -23,25 +23,31 @@ def fps_at(ratio: float) -> float:
     "mean_cpu, expected_points",
     [
         (0.0, 5.0),
-        (4.99, 5.0),
-        (5.0, 5.0),
-        (5.5, 5.0),
-        (6.0, 5.0),
-        (7.0, 4.64),
-        (8.0, 4.29),
-        (9.0, 3.93),
-        (10.0, 3.57),
-        (11.0, 3.21),
-        (12.0, 2.86),
-        (13.0, 2.5),
-        (14.0, 2.14),
-        (15.0, 1.79),
-        (16.0, 1.43),
-        (17.0, 1.07),
-        (18.0, 0.71),
-        (19.0, 0.36),
-        (20.0, 0.0),
-        (20.001, 0.0),
+        (10.0, 5.0),
+        (12.0, 5.0),
+        (13.0, 5.0),
+        (14.0, 4.76),
+        (15.0, 4.52),
+        (16.0, 4.29),
+        (17.0, 4.05),
+        (18.0, 3.81),
+        (19.0, 3.57),
+        (20.0, 3.33),
+        (21.0, 3.10),
+        (22.0, 2.86),
+        (23.0, 2.62),
+        (24.0, 2.38),
+        (25.0, 2.14),
+        (26.0, 1.90),
+        (27.0, 1.67),
+        (28.0, 1.43),
+        (29.0, 1.19),
+        (30.0, 0.95),
+        (31.0, 0.71),
+        (32.0, 0.48),
+        (33.0, 0.24),
+        (34.0, 0.0),
+        (34.001, 0.0),
         (99.0, 0.0),
     ],
 )
@@ -66,29 +72,29 @@ def test_score_cpu_gates_when_fps_below_threshold():
     assert reason == "4k_fps_below_threshold"
 
 
-def test_score_cpu_default_gate_trips_just_below_065():
-    # At the new module default (0.65), 0.64 ratio must gate.
+def test_score_cpu_default_gate_trips_just_below_08():
+    # At the module default (0.8), 0.79 ratio must gate.
     points, reason = scorer.score_cpu(
         mean_cpu_percent=2.0,
-        measured_fps=fps_at(0.64),
+        measured_fps=fps_at(0.79),
     )
     assert points == 0.0
     assert reason == "4k_fps_below_threshold"
 
 
-def test_score_cpu_default_gate_passes_just_above_065():
-    # 0.66 ratio passes the gate and the cpu scorer awards full marks at <=5% mean.
+def test_score_cpu_default_gate_passes_just_above_08():
+    # 0.81 ratio passes the gate and the cpu scorer awards full marks at <=12% mean.
     points, reason = scorer.score_cpu(
         mean_cpu_percent=2.0,
-        measured_fps=fps_at(0.66),
+        measured_fps=fps_at(0.81),
     )
     assert points == 5.0
     assert reason is None
 
 
 def test_score_cpu_default_gate_trips_when_only_partial_fps_credit():
-    # 2K ratio 0.50 earns partial linear FPS credit but is still below the
-    # 0.65 CPU gate, so CPU must be gated to 0 regardless of measured CPU.
+    # 4K ratio 0.50 earns partial linear FPS credit but is still below the
+    # 0.8 CPU gate, so CPU must be gated to 0 regardless of measured CPU.
     points, reason = scorer.score_cpu(
         mean_cpu_percent=0.0,
         measured_fps=fps_at(0.50),

@@ -180,7 +180,7 @@ def test_build_score_fps_never_closes_correctness_gate():
     assert out["2k"]["total"] == 8.5
     assert out["4k"]["total"] == 7.5
     # The CPU sub-score now rides on the 4K round; a 0.25 FPS ratio there is
-    # below the 0.65 CPU gate, so CPU is gated even though the correctness gate
+    # below the 0.8 CPU gate, so CPU is gated even though the correctness gate
     # stayed open. Low FPS still never closes the correctness gate.
     assert out["cpu"]["points"] == 0
     assert out["cpu"]["gate_reason"] == "4k_fps_below_threshold"
